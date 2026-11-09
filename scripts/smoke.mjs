@@ -1,0 +1,11 @@
+import { _electron } from 'playwright';
+import fs from 'node:fs';
+import path from 'node:path';
+const root=process.cwd();const data=path.join(root,'.test-data/smoke');fs.mkdirSync(path.join(root,'artifacts'),{recursive:true});
+const app=await _electron.launch({...(process.env.SAINT_TEST_EXE?{executablePath:process.env.SAINT_TEST_EXE,args:[]}:{args:[root]}),env:{...process.env,SAINT_DATA_DIR:data}});
+app.process().stderr.on('data',d=>process.stdout.write(d));
+const page=await app.firstWindow();page.on('pageerror',e=>console.log('PAGE_ERROR',e.message));
+await page.waitForSelector('.welcome');await page.evaluate(()=>document.fonts.ready);
+await page.screenshot({path:'artifacts/01-desktop-empty.png'});
+const info=await page.evaluate(()=>window.saint.invoke('bootstrap'));console.log(JSON.stringify({title:await page.title(),engine:info.engine.current,node:await app.evaluate(()=>process.versions.node),electron:await app.evaluate(()=>process.versions.electron)}));
+await app.close();

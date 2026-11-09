@@ -1,0 +1,99 @@
+{
+  "name": "saint-harness",
+  "productName": "Saint Harness",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A personal desktop workspace powered by Pi",
+  "author": "Saint Alliance",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/build-main.mjs",
+    "start": "electron .",
+    "test": "tsx --test tests/*.test.ts",
+    "test:desktop": "node scripts/test-desktop.mjs",
+    "package": "npm run build && electron-builder --win dir",
+    "package:zip": "npm run build && electron-builder --win zip",
+    "runtime:install": "npm install --prefix runtime --omit=dev",
+    "test:runtime": "tsx scripts/test-runtime.ts"
+  },
+  "build": {
+    "appId": "com.saintalliance.harness",
+    "productName": "Saint Harness",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "assets/icon.png",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": [
+          "package.json",
+          "package-lock.json"
+        ]
+      },
+      {
+        "from": "runtime/node_modules",
+        "to": "runtime/node_modules",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "extensions",
+        "to": "extensions"
+      }
+    ],
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
+    "win": {
+      "target": [
+        "zip"
+      ],
+      "icon": "assets/icon.ico",
+      "signExecutable": false
+    },
+    "artifactName": "Saint-Harness-${version}-${arch}.${ext}",
+    "extraFiles": [
+      {
+        "from": "README.md",
+        "to": "使用说明.md"
+      },
+      {
+        "from": "VALIDATION.md",
+        "to": "验收记录.md"
+      }
+    ]
+  },
+  "dependencies": {
+    "lucide-react": "^1.70.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "semver": "^7.8.6",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/semver": "^7.8.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "electron": "44.9.3",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.65.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}

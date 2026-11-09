@@ -1,0 +1,21 @@
+export type AccessMode = 'ask' | 'auto' | 'full';
+export interface Project { id: string; name: string; path: string; trusted: boolean }
+export interface Thread { id: string; projectId: string; title: string; sessionFile?: string; createdAt: number; updatedAt: number }
+export interface ProviderConfig { id: 'anthropic' | 'openai' | 'deepseek' | 'custom'; name: string; baseUrl?: string; modelId?: string; contextWindow?: number; reasoning?: boolean; hasKey?: boolean }
+export interface Settings { access: AccessMode; autoCheck: boolean; autoUpdate: boolean; providers: ProviderConfig[]; defaultModel?: { provider: string; id: string }; defaultThinking?: string }
+export interface Model { id: string; name: string; provider: string; contextWindow: number; reasoning: boolean; input?: string[] }
+export interface Skill { name: string; description?: string; source: string; sourceInfo?: { path: string; scope: string } }
+export interface ContentBlock { type: string; text?: string; thinking?: string; id?: string; name?: string; arguments?: Record<string, unknown>; data?: string; mimeType?: string }
+export interface Message { role: string; content: string | ContentBlock[]; timestamp?: number; toolName?: string; toolCallId?: string; isError?: boolean; errorMessage?: string; stopReason?: string; usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } }
+export interface SessionStats { tokens: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }; cost: number; contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null } }
+export interface Snapshot { connected: boolean; busy: boolean; threadId?: string; model?: Model; thinkingLevel: string; models: Model[]; levels: string[]; commands: Skill[]; messages: Message[]; stats?: SessionStats; sessionFile?: string; error?: string }
+export interface RuntimeInfo { current: string; latest?: string; previous?: string; updating: boolean; message?: string; external: boolean; path: string; updateAvailable?: boolean }
+export interface Bootstrap { projects: Project[]; threads: Thread[]; activeThreadId?: string; settings: Settings; engine: RuntimeInfo; version: string; snapshot: Snapshot }
+export interface FileEntry { name: string; path: string; directory: boolean }
+export interface ChangeEntry { path: string; status: string; additions: number; deletions: number; untracked: boolean }
+export interface Changes { git: boolean; branch?: string; files: ChangeEntry[]; error?: string }
+export interface Attachment { id: string; name: string; bytes: number; image: boolean }
+export interface PiEvent { type: string; [key: string]: any }
+export type DesktopEvent = { kind: 'pi'; threadId: string; record: PiEvent } | { kind: 'snapshot'; snapshot: Snapshot } | { kind: 'engine'; engine: RuntimeInfo } | { kind: 'data' };
+export interface Bridge { invoke<T = any>(action: string, payload?: unknown): Promise<T>; onEvent(callback: (event: DesktopEvent) => void): () => void; window(action: 'minimize' | 'maximize' | 'close'): void }
+declare global { interface Window { saint: Bridge } }
