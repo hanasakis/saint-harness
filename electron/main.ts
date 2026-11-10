@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { Store } from './store';
 import { RuntimeManager } from './runtime';
 import { Sessions } from './sessions';
+import type { SessionChannel } from './session';
 import { testProviderConnection } from './provider-test';
 import { WorkspaceActions, threadLink, threadIdFromLink } from './workspace-actions';
 import { prepareAttachments, discardAttachment, type AttachmentSource } from './attachments';
@@ -34,7 +35,7 @@ const idSchema = z.object({ id: z.string().min(1).max(200) });
 const pathSchema = z.object({ path: z.string().max(4000) });
 const providerSchema = z.object({ id: z.enum(['anthropic','openai','deepseek','custom']), name: z.string().max(100), apiKey: z.string().trim().max(12000).optional(), baseUrl: z.string().trim().max(2000).optional(), modelId: z.string().trim().max(250).optional(), contextWindow: z.number().int().min(1024).max(4_000_000).optional(), reasoning: z.boolean().optional(), supportsImages: z.boolean().optional() });
 
-async function bootstrap(): Promise<Bootstrap> { return { activities: sessions.activities, navigating: sessions.navigating, projects: store.data.projects, threads: store.data.threads, activeThreadId: store.data.activeThreadId, settings: store.publicSettings(), engine: runtime.info(), version: app.getVersion(), snapshot: sessions.snapshot }; }
+async function bootstrap(): Promise<Bootstrap> { return { activities: sessions.activities, navigating: sessions.navigating, projects: store.data.projects, threads: store.data.threads, activeThreadId: store.data.activeThreadId, settings: store.publicSettings(), engine: runtime.info(), version: app.getVersion(), snapshot: sessions.snapshot, side: sessions.sideSnapshot }; }
 async function reconnect() { await sessions.reconnect(); send({ kind: 'data' }); }
 function validWebUrl(input: string) { const url = new URL(input); if (!['https:','http:'].includes(url.protocol) || url.username || url.password) throw new Error('地址必须是有效的 HTTP 或 HTTPS URL'); return url; }
 function confirmFullAccess() {
@@ -42,18 +43,25 @@ function confirmFullAccess() {
   return new Promise<boolean>(resolve => { const id = randomUUID(); accessConfirmation = { id, resolve }; send({ kind: 'confirm-access', request: { id } }); });
 }
 function cancelAccessConfirmation() { accessConfirmation?.resolve(false); accessConfirmation = undefined; }
-let addingAttachments = false;
-async function registerAttachments(paths: AttachmentSource[]) {
-  if (addingAttachments) throw new Error('正在添加附件，请稍候');
-  addingAttachments = true;
+const addingAttachments = new Set<SessionChannel>();
+function attachmentChannel(id?: string) {
+  requireNavigation(); const channel = sessions.visibleChannel(id);
+  if (!channel.snapshot.threadId) throw new Error('请先打开一个工作空间，再添加附件');
+  if (channel.busy) throw new Error('请等待当前会话任务结束');
+  return channel;
+}
+async function registerAttachments(paths: AttachmentSource[], channel = attachmentChannel()) {
+  if (addingAttachments.has(channel)) throw new Error('正在添加附件，请稍候');
+  addingAttachments.add(channel);
   try {
-    const threadId = sessions.snapshot.threadId, rpc = sessions.rpc;
+    const threadId = channel.snapshot.threadId, rpc = channel.rpc;
     const cache = path.join(store.directory, 'attachments');
-    const added = await prepareAttachments(paths, [...sessions.attachments.values()], cache);
-    if (threadId !== sessions.snapshot.threadId || rpc !== sessions.rpc || sessions.currentBusy || sessions.navigating) { added.forEach(item => discardAttachment(item, cache)); throw new Error('会话状态已变化，请在当前会话重新添加附件'); }
-    for (const item of added) sessions.attachments.set(item.info.id, item);
+    const added = await prepareAttachments(paths, [...channel.attachments.values()], cache);
+    let visible = false; try { visible = sessions.visibleChannel(threadId) === channel; } catch {}
+    if (!visible || rpc !== channel.rpc || channel.busy || sessions.navigating) { added.forEach(item => discardAttachment(item, cache)); throw new Error('会话状态已变化，请在当前会话重新添加附件'); }
+    for (const item of added) channel.attachments.set(item.info.id, item);
     return added.map(item => item.info);
-  } finally { addingAttachments = false; }
+  } finally { addingAttachments.delete(channel); }
 }
 async function openLink(link: string) {
   requireNavigation(); const id = threadIdFromLink(link);
@@ -80,15 +88,36 @@ async function handle(action: string, payload: unknown) {
     case 'project.rename': { requireIdle(); const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); store.project(id).name = title; store.save(); send({ kind: 'data' }); return true; }
     case 'project.reveal': { const { id } = idSchema.parse(payload); const error = await shell.openPath(store.project(id).path); if (error) throw new Error(error); return true; }
     case 'project.copyPath': { const { id } = idSchema.parse(payload); clipboard.writeText(store.project(id).path); return true; }
-    case 'project.archive': case 'thread.archive': { requireIdle(); const { id } = idSchema.parse(payload); await workspace.archive(action === 'project.archive' ? 'project' : 'thread', id); return true; }
-    case 'project.delete': case 'thread.delete': { requireIdle(); const { id } = idSchema.extend({ confirmed: z.literal(true) }).parse(payload); await workspace.delete(action === 'project.delete' ? 'project' : 'thread', id); return true; }
+    case 'project.archive': case 'thread.archive': { requireIdle(); const { id } = idSchema.parse(payload); const kind = action === 'project.archive' ? 'project' : 'thread'; await sessions.closeSideFor(kind, id); await workspace.archive(kind, id); return true; }
+    case 'project.delete': case 'thread.delete': { requireIdle(); const { id } = idSchema.extend({ confirmed: z.literal(true) }).parse(payload); const kind = action === 'project.delete' ? 'project' : 'thread'; await sessions.closeSideFor(kind, id); await workspace.delete(kind, id); return true; }
     case 'project.restore': case 'thread.restore': { requireIdle(); const { id } = idSchema.parse(payload); workspace.restore(action === 'project.restore' ? 'project' : 'thread', id); return true; }
-    case 'thread.move': { requireIdle(); const { id, projectId } = idSchema.extend({ projectId: z.string() }).parse(payload); await workspace.move(id, projectId); return true; }
+    case 'thread.move': { requireIdle(); const { id, projectId } = idSchema.extend({ projectId: z.string() }).parse(payload); await sessions.closeSideFor('thread', id); await workspace.move(id, projectId); return true; }
     case 'thread.copyLink': { const { id } = idSchema.parse(payload); store.thread(id); const link = threadLink(id); clipboard.writeText(link); return link; }
     case 'thread.openLink': { const { link } = z.object({ link: z.string().max(500) }).parse(payload); await openLink(link); return true; }
     case 'thread.new': { requireNavigation(); const { projectId } = z.object({ projectId: z.string() }).parse(payload); const thread = store.addThread(projectId); send({ kind: 'data' }); await sessions.connect(thread.id); return thread; }
     case 'thread.open': { requireNavigation(); const { id } = idSchema.parse(payload); return sessions.connect(id); }
     case 'thread.rename': { requireNavigation(); const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); const thread = store.thread(id); thread.title = title; thread.titleSource = 'manual'; thread.titleStatus = 'done'; store.save(); send({ kind: 'data' }); return true; }
+    case 'selection.copy': { const { text } = z.object({ text: z.string().max(200000) }).parse(payload); await clipboard.writeText(text); return true; }
+    case 'side.create': {
+      requireNavigation();
+      const quote = z.object({ threadId: z.string().min(1), entryId: z.string().min(1), text: z.string().min(1).max(20000), title: z.string().max(100) }).parse(payload);
+      if (!quote.text.trim()) throw new Error('请先选择文字');
+      return sessions.branchSelection(quote);
+    }
+    case 'side.open': { requireNavigation(); return sessions.openSide(idSchema.parse(payload).id); }
+    case 'side.close': { requireNavigation(); await sessions.closeSide(); return true; }
+    case 'side.send': {
+      requireNavigation(); const p = z.object({ threadId: z.string(), text: z.string().trim().min(1).max(200000), attachments: z.array(z.string()).max(10).default([]) }).parse(payload);
+      const channel = sessions.visibleChannel(p.threadId); if (addingAttachments.has(channel)) throw new Error('请等待附件添加完成');
+      return channel.prompt(p.text, [], p.attachments);
+    }
+    case 'side.stop': { const { id } = idSchema.parse(payload); return sessions.visibleChannel(id).stop(); }
+    case 'side.model': { requireNavigation(); const p = z.object({ threadId: z.string(), provider: z.string(), modelId: z.string() }).parse(payload); return sessions.visibleChannel(p.threadId).setModel(p.provider, p.modelId); }
+    case 'side.thinking': { requireNavigation(); const p = z.object({ threadId: z.string(), level: z.string() }).parse(payload); return sessions.visibleChannel(p.threadId).setThinking(p.level); }
+    case 'side.respond': {
+      const p = z.object({ threadId: z.string(), id: z.string(), confirmed: z.boolean().optional(), value: z.string().max(100000).optional(), cancelled: z.boolean().optional() }).parse(payload);
+      sessions.visibleChannel(p.threadId).respond(p.id, p); return true;
+    }
     case 'session.refresh': return sessions.refresh();
     case 'session.send': { requireCurrentIdle(); const p = z.object({ text: z.string().trim().min(1).max(200000), skills: z.array(z.string()).max(20).default([]), attachments: z.array(z.string()).max(10).default([]) }).parse(payload); return sessions.prompt(p.text, p.skills, p.attachments); }
     case 'session.stop': return sessions.stop();
@@ -117,25 +146,27 @@ async function handle(action: string, payload: unknown) {
     case 'changes.list': return files.changes(currentProject().path);
     case 'changes.diff': return files.diff(currentProject().path, pathSchema.parse(payload).path);
     case 'attachments.pick': {
-      requireCurrentIdle(); const result = await dialog.showOpenDialog(window!, { title: '添加文件', properties: ['openFile','multiSelections'], filters: [{ name: '所有文件', extensions: ['*'] }] });
-      if (result.canceled) return []; requireCurrentIdle(); return registerAttachments(result.filePaths);
+      const { threadId } = z.object({ threadId: z.string().optional() }).parse(payload || {}); const channel = attachmentChannel(threadId);
+      const result = await dialog.showOpenDialog(window!, { title: '添加文件', properties: ['openFile','multiSelections'], filters: [{ name: '所有文件', extensions: ['*'] }] });
+      if (result.canceled) return []; if (attachmentChannel(channel.snapshot.threadId) !== channel) throw new Error('会话已切换，请重新添加');
+      return registerAttachments(result.filePaths, channel);
     }
-    case 'attachments.add': { requireCurrentIdle(); const { paths } = z.object({ paths: z.array(z.string().min(1).max(4000)).min(1).max(10) }).parse(payload); return registerAttachments(paths); }
+    case 'attachments.add': { const { paths, threadId } = z.object({ paths: z.array(z.string().min(1).max(4000)).min(1).max(10), threadId: z.string().optional() }).parse(payload); return registerAttachments(paths, attachmentChannel(threadId)); }
     case 'composer.paste': {
       const { threadId, textOnly } = z.object({ threadId: z.string().optional(), textOnly: z.boolean().optional() }).parse(payload);
-      const rpc = sessions.rpc;
+      const channel = sessions.visibleChannel(threadId), rpc = channel.rpc;
       const value = await readComposerClipboard(textOnly);
-      if (threadId !== sessions.snapshot.threadId || rpc !== sessions.rpc) throw new Error('会话已切换，请重新粘贴');
+      if (sessions.visibleChannel(threadId) !== channel || rpc !== channel.rpc) throw new Error('会话已切换，请重新粘贴');
       if (!value.sources.length) return { text: value.text, attachments: [] };
-      requireCurrentIdle();
+      attachmentChannel(threadId);
       if (!threadId) throw new Error('请先打开一个工作空间，再添加附件');
-      return { text: '', attachments: await registerAttachments(value.sources) };
+      return { text: '', attachments: await registerAttachments(value.sources, channel) };
     }
     case 'composer.edit': {
       const { command } = z.object({ command: z.enum(['undo','redo','cut','copy','selectAll']) }).parse(payload);
       window!.webContents[command](); return true;
     }
-    case 'attachments.remove': { const { id } = idSchema.parse(payload); sessions.removeAttachment(id); return true; }
+    case 'attachments.remove': { const { id, threadId } = idSchema.extend({ threadId: z.string().optional() }).parse(payload); sessions.visibleChannel(threadId).removeAttachment(id); return true; }
     case 'skills.add': {
       requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择技能的 SKILL.md 文件', properties: ['openFile'], filters: [{ name: 'Skill', extensions: ['md'] }] }); if (result.canceled) return false;
       const file = result.filePaths[0]; if (path.basename(file).toLowerCase() !== 'skill.md') throw new Error('请选择技能目录中的 SKILL.md'); if (fs.statSync(file).size > 128000) throw new Error('技能文件不能超过 128 KB');

@@ -6,6 +6,7 @@ import { Store } from './store';
 import { PiRpc } from './rpc';
 import { RuntimeManager } from './runtime';
 import { discardAttachment } from './attachments';
+import { withEntryIds, type TreeEntry } from '../shared/selection';
 
 export const emptySnapshot = (): Snapshot => ({ connected: false, busy: false, thinkingLevel: 'off', models: [], levels: [], commands: [], messages: [] });
 export class SessionChannel {
@@ -92,8 +93,9 @@ export class SessionChannel {
     this.suspension = (async () => { await rpc?.close(); })().finally(() => { this.suspension = undefined; });
     return this.suspension;
   }
+  view() { return { ...this.snapshot, attachments: [...this.attachments.values()].map(a => a.info), requests: [...this.pendingUI.values()] }; }
   publish() {
-    this.snapshot = { ...this.snapshot, attachments: [...this.attachments.values()].map(a => a.info), requests: [...this.pendingUI.values()] };
+    this.snapshot = this.view();
     this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot });
   }
   private handle(record: PiEvent, threadId?: string) {
@@ -132,9 +134,9 @@ export class SessionChannel {
   async refresh() {
     if (!this.rpc?.alive) return this.snapshot;
     const rpc = this.rpc;
-    const [state, models, levels, commands, messages, stats] = await Promise.all([rpc.request('get_state'), rpc.request('get_available_models'), rpc.request('get_available_thinking_levels'), rpc.request('get_commands'), rpc.request('get_messages'), rpc.request('get_session_stats')]);
+    const [state, models, levels, commands, messages, stats, tree] = await Promise.all([rpc.request('get_state'), rpc.request('get_available_models'), rpc.request('get_available_thinking_levels'), rpc.request('get_commands'), rpc.request('get_messages'), rpc.request('get_session_stats'), rpc.request<{ entries: TreeEntry[]; leafId: string | null }>('get_entries').catch(() => undefined)]);
     if (rpc !== this.rpc) return this.snapshot;
-    this.snapshot = { ...this.snapshot, connected: true, busy: this.connecting || rpc.busy || this.starting || !!state.isStreaming || !!state.isCompacting, threadId: this.snapshot.threadId, model: this.model(state.model), thinkingLevel: state.thinkingLevel, models: models.models.map((m: unknown) => this.model(m)).filter(Boolean), levels: levels.levels, commands: commands.commands, messages: messages.messages, stats, sessionFile: state.sessionFile };
+    this.snapshot = { ...this.snapshot, connected: true, busy: this.connecting || rpc.busy || this.starting || !!state.isStreaming || !!state.isCompacting, threadId: this.snapshot.threadId, model: this.model(state.model), thinkingLevel: state.thinkingLevel, models: models.models.map((m: unknown) => this.model(m)).filter(Boolean), levels: levels.levels, commands: commands.commands, messages: tree?.entries ? withEntryIds(messages.messages, tree.entries, tree.leafId) : messages.messages, stats, sessionFile: state.sessionFile };
     if (this.snapshot.threadId) { const thread = this.store.thread(this.snapshot.threadId); thread.sessionFile = state.sessionFile; this.store.save(); }
     this.publish(); return this.snapshot;
   }

@@ -1,9 +1,11 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useImperativeHandle, useRef, useState, type RefObject, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Scissors, ClipboardPaste, Undo2, Redo2, TextSelect } from 'lucide-react';
 import type { Attachment } from '../shared/types';
 
 type Props = {
+  controller?: RefObject<{ paste: () => void } | null>;
+  label?: string;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   value: string; placeholder: string; threadId?: string;
   onChange: (text: string) => void; onSend: () => void;
@@ -14,7 +16,7 @@ type Props = {
 type Selection = { start: number; end: number; direction: 'forward' | 'backward' | 'none' };
 type Position = Selection & { x: number; y: number };
 
-export function ComposerInput({ inputRef, value, placeholder, threadId, onChange, onSend, onPaste, onAttachments, onError }: Props) {
+export function ComposerInput({ controller, label = '任务输入', inputRef, value, placeholder, threadId, onChange, onSend, onPaste, onAttachments, onError }: Props) {
   const [menu, setMenu] = useState<Position>();
   const menuRef = useRef<HTMLDivElement>(null);
   const pasting = useRef(false);
@@ -23,6 +25,7 @@ export function ComposerInput({ inputRef, value, placeholder, threadId, onChange
     const el = inputRef.current!;
     return { start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection };
   };
+  useImperativeHandle(controller, () => ({ paste: () => { inputRef.current?.focus(); void paste(selection()); } }));
   function restore(range: Selection) {
     const el = inputRef.current;
     el?.focus({ preventScroll: true }); el?.setSelectionRange(range.start, range.end, range.direction);
@@ -90,7 +93,7 @@ export function ComposerInput({ inputRef, value, placeholder, threadId, onChange
     { command: 'selectAll', label: '全选', icon: TextSelect, shortcut: 'Ctrl A', disabled: !value },
   ] as const;
   return <>
-    <textarea ref={inputRef} aria-label="任务输入" placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} rows={2}
+    <textarea ref={inputRef} aria-label={label} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} rows={2}
       onKeyDown={key} onPaste={e => { e.preventDefault(); void paste(selection()); }}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openMenu(e.clientX, e.clientY); }} />
     {menu && createPortal(<div className="contextmenu glass composermenu" role="menu" aria-label="输入编辑菜单" ref={menuRef} style={{ left: menu.x, top: menu.y }} onContextMenu={e => e.preventDefault()} onKeyDown={e => {
