@@ -1,7 +1,7 @@
 {
   "name": "saint-harness",
   "productName": "Saint Harness",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "private": true,
   "description": "A personal desktop workspace powered by Pi",
   "author": "Saint Alliance",
@@ -21,7 +21,8 @@
     "test:connection": "node scripts/test-connection-ui.mjs",
     "test:engine": "node scripts/test-engine-ui.mjs",
     "test:delete": "node scripts/test-delete-ui.mjs",
-    "test:concurrent": "node scripts/test-concurrent-ui.mjs"
+    "test:concurrent": "node scripts/test-concurrent-ui.mjs",
+    "test:thinking": "node scripts/test-thinking-ui.mjs"
   },
   "build": {
     "appId": "com.saintalliance.harness",
