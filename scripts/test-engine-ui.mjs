@@ -39,6 +39,20 @@ try {
   assert.equal(JSON.parse(fs.readFileSync(path.join(data,'workspace.json'),'utf8')).runtimeInstallDirectory,download);
   await page.screenshot({path:'artifacts/engine-installed.png',animations:'disabled'});
   results.push('actual npm download into selected Chinese directory; verified live Pi RPC without creating a project');
+  assert.equal(await page.getByRole('button',{name:'下载并连接 Pi',exact:true}).count(),0);
+  // Simulate only the version number in the disposable installation. The running
+  // Pi process, download, original-directory replacement and reconnect are real.
+  const piManifest=path.join(installed.engine.path,'node_modules/@earendil-works/pi-coding-agent/package.json');
+  const older=JSON.parse(fs.readFileSync(piManifest,'utf8'));older.version='0.0.0';fs.writeFileSync(piManifest,JSON.stringify(older));
+  await page.evaluate(()=>window.saint.invoke('engine.check'));
+  await page.getByRole('button',{name:'更新 Pi',exact:true}).click();
+  await waitState(page,d=>d.engine.current===installed.engine.current&&!d.engine.updating&&d.snapshot.connected&&!d.navigating,240000);
+  assert.equal((await snapshot(page)).engine.path,installed.engine.path);
+  assert.deepEqual(fs.readdirSync(download).sort(),['Saint-Pi','Saint-Pi.previous','keep.txt'].sort());
+  await page.getByRole('button',{name:'恢复 0.0.0',exact:true}).click();await waitState(page,d=>d.engine.current==='0.0.0'&&!d.engine.updating&&d.snapshot.connected);
+  assert.equal((await snapshot(page)).engine.path,installed.engine.path);
+  await page.getByRole('button',{name:`恢复 ${installed.engine.current}`,exact:true}).click();await waitState(page,d=>d.engine.current===installed.engine.current&&!d.engine.updating&&d.snapshot.connected);
+  results.push('updating and restoring a connected Pi replaces the original directory, reconnects the actual process, and retains exactly one backup');
   const persisted=fs.readFileSync(path.join(data,'workspace.json'),'utf8');
   const empty=path.join(base,'not-pi');fs.mkdirSync(empty);
   await choose(empty);await page.getByRole('button',{name:'连接已下载的 Pi',exact:true}).click();

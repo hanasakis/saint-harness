@@ -16,6 +16,7 @@ const received=[];const server=http.createServer(async(req,res)=>{
   res.writeHead(200,{'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});
   const chunk=(delta,finish=null)=>res.write(`data: ${JSON.stringify({id:'saint-qa',object:'chat.completion.chunk',created:Math.floor(Date.now()/1000),model:'saint-test',choices:[{index:0,delta,finish_reason:finish}]})}\n\n`);
   const end=()=>{res.write(`data: ${JSON.stringify({id:'saint-qa',object:'chat.completion.chunk',choices:[],usage:{prompt_tokens:120,completion_tokens:35,total_tokens:155}})}\n\n`);res.end('data: [DONE]\n\n');};
+  if(messages.some(m=>(m.role==='system'||m.role==='developer')&&JSON.stringify(m.content).includes('你只负责为对话生成简短标题'))){chunk({role:'assistant',content:'创建验收文件'});chunk({},'stop');end();return;}
   if(text?.includes('停止测试')){chunk({role:'assistant',content:'开始执行停止测试。'});const timer=setInterval(()=>chunk({content:'等待中…'}),200);req.on('close',()=>clearInterval(timer));setTimeout(()=>{clearInterval(timer);if(!res.destroyed){chunk({},'stop');end();}},8000).unref();return;}
   if(!hasTool&&(text?.includes('创建验收文件')||text?.includes('审批测试'))){const name=text.includes('审批测试')?'未批准.txt':'验收结果.txt';chunk({role:'assistant',content:null,tool_calls:[{index:0,id:`call-${Date.now()}`,type:'function',function:{name:'write',arguments:JSON.stringify({path:name,content:'Saint Harness integration verified\n'})}}]});chunk({},'tool_calls');end();return;}
   chunk({role:'assistant',content:hasTool?'已处理工具结果。桌面集成验收完成。':'你好，这是本地验收服务的回复。'});chunk({},'stop');end();
@@ -25,7 +26,7 @@ let app;const errors=[];const results=[];
 const launch=async(link)=>{app=await _electron.launch({...(process.env.SAINT_TEST_EXE?{executablePath:process.env.SAINT_TEST_EXE,args:link?[link]:[]}:{args:[root,...(link?[link]:[])]}),env:{...process.env,SAINT_DATA_DIR:data}});const page=await app.firstWindow();page.on('pageerror',e=>errors.push(e.message));app.process().stderr.on('data',d=>{const s=String(d);if(/Error|error/i.test(s))console.log(s.trim().slice(0,1000));});await page.waitForSelector('.welcome,.conversation');return page;};
 const snapshot=page=>page.evaluate(()=>window.saint.invoke('bootstrap'));
 const waitState=async(page,predicate,timeout=45000)=>{const end=Date.now()+timeout;while(Date.now()<end){const d=await snapshot(page);if(predicate(d))return d;await page.waitForTimeout(100);}throw new Error('Timed out waiting for desktop state');};
-const waitIdle=page=>waitState(page,d=>d.snapshot.connected&&!d.snapshot.busy);
+const waitIdle=page=>waitState(page,d=>d.snapshot.connected&&!d.snapshot.busy&&!d.navigating&&!d.activities.some(a=>a.naming));
 try {
   let page=await launch();
   await app.evaluate(({dialog},directory)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});},workspace);
@@ -105,7 +106,7 @@ try {
   await page.locator(`[data-thread-id="${originalThread}"] .thread`).click({button:'right'});await page.getByRole('menuitem',{name:'复制会话链接',exact:true}).click();
   const sessionLink=await app.evaluate(({clipboard})=>clipboard.readText());assert.equal(sessionLink,`saint-harness://threads/${originalThread}`);
   await page.locator(`[data-thread-id="${targetEmptyThread}"] .thread`).click();await waitIdle(page);
-  await page.keyboard.press('Control+k');await page.getByLabel('搜索会话或链接').fill(sessionLink);await page.getByRole('button',{name:'打开此会话链接'}).click();await waitState(page,d=>d.activeThreadId===originalThread&&!d.snapshot.busy);
+  await page.keyboard.press('Control+k');await page.getByLabel('搜索会话或链接').fill(sessionLink);await page.getByRole('button',{name:'打开此会话链接'}).click();await waitState(page,d=>d.activeThreadId===originalThread&&d.snapshot.connected&&!d.snapshot.busy&&!d.navigating);
   const beforeArchive=(await snapshot(page)).snapshot.messages.length;
   await page.locator(`[data-thread-id="${originalThread}"] .thread`).click({button:'right'});await page.getByRole('menuitem',{name:'归档会话',exact:true}).click();
   await waitState(page,d=>!!d.threads.find(t=>t.id===originalThread)?.archivedAt);
@@ -175,5 +176,5 @@ try {
   results.push('cold-start session link overrode the last active thread; moved session, permissions, attachment history and project metadata survived restart');
   assert.equal(errors.length,0,errors.join('\n'));assert.ok(received.length>=4);results.push('renderer reported no uncaught JavaScript errors');
   fs.writeFileSync('artifacts/desktop-test.json',JSON.stringify({date:new Date().toISOString(),packaged:!!process.env.SAINT_TEST_EXE,results,requests:received.length,errors,model:'local deterministic OpenAI-compatible test service; no external paid API',pi:(await snapshot(page)).engine.current},null,2));console.log(JSON.stringify({passed:results},null,2));
-}catch(e){if(app){const p=await app.firstWindow();await p.screenshot({path:'artifacts/desktop-failure.png'}).catch(()=>{});const failure=await snapshot(p).catch(()=>({}));console.log(JSON.stringify({error:failure.snapshot?.error,connected:failure.snapshot?.connected,models:failure.snapshot?.models,working:await p.locator('.toast').allTextContents()},null,2));}throw e;}
+}catch(e){if(app){const p=await app.firstWindow();await p.screenshot({path:'artifacts/desktop-failure.png'}).catch(()=>{});const failure=await snapshot(p).catch(()=>({}));fs.writeFileSync('artifacts/desktop-failure.json',JSON.stringify({state:failure,requests:received,results},null,2));console.log(JSON.stringify({error:failure.snapshot?.error,connected:failure.snapshot?.connected,models:failure.snapshot?.models,working:await p.locator('.toast').allTextContents()},null,2));}throw e;}
 finally {if(app){await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1,checkboxChecked:false});}).catch(()=>{});await app.close();}server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}

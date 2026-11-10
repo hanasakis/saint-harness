@@ -17,3 +17,9 @@ pi-agent/
 runtimes/
 *.pem
 *.key
+
+# Pi updates keep their temporary directory and one rollback copy beside runtime.
+/runtime.previous/
+/runtime.superseded/
+/runtime.rollback/
+/.runtime.update-*/

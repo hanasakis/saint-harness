@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Store } from './store';
 import { RuntimeManager } from './runtime';
-import { Sessions } from './session';
+import { Sessions } from './sessions';
 import { testProviderConnection } from './provider-test';
 import { WorkspaceActions, threadLink, threadIdFromLink } from './workspace-actions';
 import { prepareAttachments, discardAttachment } from './attachments';
@@ -26,12 +26,14 @@ let ready = false;
 let shuttingDown = false;
 const send = (event: DesktopEvent) => { if (window && !window.isDestroyed()) window.webContents.send('saint:event', event); };
 const requireIdle = () => { if (sessions.busy || runtime.info().updating || workspace?.deleting) throw new Error('请等待当前任务、更新或删除结束'); };
+const requireNavigation = () => { if (sessions.navigating || runtime.info().updating || workspace?.deleting) throw new Error('正在切换会话、更新或删除，请稍候'); };
+const requireCurrentIdle = () => { requireNavigation(); if (sessions.currentBusy) throw new Error('请等待当前会话任务结束'); };
 const currentProject = () => store.projectFor(store.thread());
 const idSchema = z.object({ id: z.string().min(1).max(200) });
 const pathSchema = z.object({ path: z.string().max(4000) });
 const providerSchema = z.object({ id: z.enum(['anthropic','openai','deepseek','custom']), name: z.string().max(100), apiKey: z.string().trim().max(12000).optional(), baseUrl: z.string().trim().max(2000).optional(), modelId: z.string().trim().max(250).optional(), contextWindow: z.number().int().min(1024).max(4_000_000).optional(), reasoning: z.boolean().optional(), supportsImages: z.boolean().optional() });
 
-async function bootstrap(): Promise<Bootstrap> { return { projects: store.data.projects, threads: store.data.threads, activeThreadId: store.data.activeThreadId, settings: store.publicSettings(), engine: runtime.info(), version: app.getVersion(), snapshot: sessions.snapshot }; }
+async function bootstrap(): Promise<Bootstrap> { return { activities: sessions.activities, navigating: sessions.navigating, projects: store.data.projects, threads: store.data.threads, activeThreadId: store.data.activeThreadId, settings: store.publicSettings(), engine: runtime.info(), version: app.getVersion(), snapshot: sessions.snapshot }; }
 async function reconnect() { await sessions.reconnect(); send({ kind: 'data' }); }
 function validWebUrl(input: string) { const url = new URL(input); if (!['https:','http:'].includes(url.protocol) || url.username || url.password) throw new Error('地址必须是有效的 HTTP 或 HTTPS URL'); return url; }
 function confirmFullAccess() {
@@ -48,7 +50,7 @@ async function registerAttachments(paths: string[]) {
   return added.map(item => item.info);
 }
 async function openLink(link: string) {
-  requireIdle(); const id = threadIdFromLink(link);
+  requireNavigation(); const id = threadIdFromLink(link);
   if (!store.data.threads.some(t => t.id === id)) throw new Error('此设备没有这条会话。会话链接只定位本机记录，不会上传或分享聊天内容。');
   await sessions.connect(id);
 }
@@ -61,8 +63,8 @@ async function handle(action: string, payload: unknown) {
   switch (action) {
     case 'bootstrap': return bootstrap();
     case 'project.add': {
-      requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择工作空间', properties: ['openDirectory'] }); if (result.canceled) return null;
-      const project = store.addProject(result.filePaths[0]); const thread = store.addThread(project.id); send({ kind: 'data' }); await sessions.connect(thread.id); return project;
+      requireNavigation(); const result = await dialog.showOpenDialog(window!, { title: '选择工作空间', properties: ['openDirectory'] }); if (result.canceled) return null;
+      requireNavigation(); const project = store.addProject(result.filePaths[0]); const thread = store.addThread(project.id); send({ kind: 'data' }); await sessions.connect(thread.id); return project;
     }
     case 'project.trust': {
       requireIdle(); const project = currentProject();
@@ -78,11 +80,11 @@ async function handle(action: string, payload: unknown) {
     case 'thread.move': { requireIdle(); const { id, projectId } = idSchema.extend({ projectId: z.string() }).parse(payload); await workspace.move(id, projectId); return true; }
     case 'thread.copyLink': { const { id } = idSchema.parse(payload); store.thread(id); const link = threadLink(id); clipboard.writeText(link); return link; }
     case 'thread.openLink': { const { link } = z.object({ link: z.string().max(500) }).parse(payload); await openLink(link); return true; }
-    case 'thread.new': { requireIdle(); const { projectId } = z.object({ projectId: z.string() }).parse(payload); const thread = store.addThread(projectId); send({ kind: 'data' }); await sessions.connect(thread.id); return thread; }
-    case 'thread.open': { requireIdle(); const { id } = idSchema.parse(payload); return sessions.connect(id); }
-    case 'thread.rename': { requireIdle(); const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); store.thread(id).title = title; store.save(); send({ kind: 'data' }); return true; }
+    case 'thread.new': { requireNavigation(); const { projectId } = z.object({ projectId: z.string() }).parse(payload); const thread = store.addThread(projectId); send({ kind: 'data' }); await sessions.connect(thread.id); return thread; }
+    case 'thread.open': { requireNavigation(); const { id } = idSchema.parse(payload); return sessions.connect(id); }
+    case 'thread.rename': { requireNavigation(); const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); const thread = store.thread(id); thread.title = title; thread.titleSource = 'manual'; thread.titleStatus = 'done'; store.save(); send({ kind: 'data' }); return true; }
     case 'session.refresh': return sessions.refresh();
-    case 'session.send': { requireIdle(); const p = z.object({ text: z.string().trim().min(1).max(200000), skills: z.array(z.string()).max(20).default([]), attachments: z.array(z.string()).max(10).default([]) }).parse(payload); return sessions.prompt(p.text, p.skills, p.attachments); }
+    case 'session.send': { requireCurrentIdle(); const p = z.object({ text: z.string().trim().min(1).max(200000), skills: z.array(z.string()).max(20).default([]), attachments: z.array(z.string()).max(10).default([]) }).parse(payload); return sessions.prompt(p.text, p.skills, p.attachments); }
     case 'session.stop': return sessions.stop();
     case 'session.model': { const p = z.object({ provider: z.string(), modelId: z.string() }).parse(payload); return sessions.setModel(p.provider, p.modelId); }
     case 'session.thinking': return sessions.setThinking(z.object({ level: z.string() }).parse(payload).level);
@@ -109,10 +111,10 @@ async function handle(action: string, payload: unknown) {
     case 'changes.list': return files.changes(currentProject().path);
     case 'changes.diff': return files.diff(currentProject().path, pathSchema.parse(payload).path);
     case 'attachments.pick': {
-      requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '添加文件', properties: ['openFile','multiSelections'], filters: [{ name: '所有文件', extensions: ['*'] }] });
-      if (result.canceled) return []; requireIdle(); return registerAttachments(result.filePaths);
+      requireCurrentIdle(); const result = await dialog.showOpenDialog(window!, { title: '添加文件', properties: ['openFile','multiSelections'], filters: [{ name: '所有文件', extensions: ['*'] }] });
+      if (result.canceled) return []; requireCurrentIdle(); return registerAttachments(result.filePaths);
     }
-    case 'attachments.add': { requireIdle(); const { paths } = z.object({ paths: z.array(z.string().min(1).max(4000)).min(1).max(10) }).parse(payload); return registerAttachments(paths); }
+    case 'attachments.add': { requireCurrentIdle(); const { paths } = z.object({ paths: z.array(z.string().min(1).max(4000)).min(1).max(10) }).parse(payload); return registerAttachments(paths); }
     case 'attachments.remove': { const { id } = idSchema.parse(payload); sessions.removeAttachment(id); return true; }
     case 'skills.add': {
       requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择技能的 SKILL.md 文件', properties: ['openFile'], filters: [{ name: 'Skill', extensions: ['md'] }] }); if (result.canceled) return false;
@@ -136,6 +138,7 @@ async function handle(action: string, payload: unknown) {
     case 'engine.detect': return runtime.detect();
     case 'engine.install': {
       requireIdle();
+      if(runtime.info().installed)return runtime.connectExisting(runtime.info().path,()=>sessions.busy,reconnect);
       const result = await dialog.showOpenDialog(window!, {title:'选择 Pi 保存位置',buttonLabel:'下载到这里并连接',properties:['openDirectory','createDirectory']});
       if (result.canceled || !result.filePaths[0]) return null;
       requireIdle(); return runtime.install(result.filePaths[0],()=>sessions.busy || workspace.deleting,reconnect);
@@ -170,7 +173,7 @@ app.whenReady().then(async () => {
   const root = app.isPackaged ? process.resourcesPath : app.getAppPath();
   try { store = new Store(app.getPath('userData')); } catch { await dialog.showMessageBox({ type:'error', message:'工作空间索引无法读取', detail:`原文件已保留，请检查 ${app.getPath('userData')} 中的 workspace.json。` }); app.quit(); return; }
   const extension = path.join(root, 'extensions/permissions.mjs');
-  runtime = new RuntimeManager(path.join(root, 'runtime'), process.execPath, extension, store, info => send({ kind: 'engine', engine: info }));
+  runtime = new RuntimeManager(path.join(root, 'runtime'), process.execPath, extension, store, info => send({ kind: 'engine', engine: info }), async () => { await sessions?.suspendAll(); });
   sessions = new Sessions(store, runtime, extension, send);
   workspace = new WorkspaceActions(store, sessions, () => send({ kind: 'data' }));
   if (app.isPackaged && !process.env.SAINT_DATA_DIR) app.setAsDefaultProtocolClient('saint-harness');
@@ -186,15 +189,15 @@ app.whenReady().then(async () => {
   window.on('close', event => {
     if (shuttingDown) return;
     if (workspace.deleting) { event.preventDefault(); send({ kind: 'notice', message: '正在删除归档内容，完成后即可退出。' }); return; }
-    if (sessions.busy || runtime.info().updating) { event.preventDefault(); void dialog.showMessageBox(window!, { type: 'question', message: '任务仍在运行，要停止并退出吗？', buttons: ['继续运行','停止并退出'], defaultId: 0, cancelId: 0 }).then(async result => { if (result.response !== 1) return; shuttingDown = true; runtime.shutdown(); await sessions.rpc?.close(); window?.close(); }); }
+    if (sessions.busy || runtime.info().updating) { event.preventDefault(); void dialog.showMessageBox(window!, { type: 'question', message: '任务仍在运行，要停止并退出吗？', buttons: ['继续运行','停止并退出'], defaultId: 0, cancelId: 0 }).then(async result => { if (result.response !== 1) return; shuttingDown = true; runtime.shutdown(); await sessions.close(); window?.close(); }); }
   });
   window.once('ready-to-show', () => window?.show());
   const dev = !app.isPackaged && process.env.SAINT_DEV_URL;
   if (dev) { if (new URL(dev).origin !== 'http://127.0.0.1:5187') throw new Error('Invalid development URL'); await window.loadURL(dev); } else await window.loadFile(path.join(app.getAppPath(),'dist/index.html'));
-  if (store.data.activeThreadId || store.data.runtimePath || store.data.externalCli) await sessions.reconnect().catch(() => {});
+  if (store.data.activeThreadId || runtime.info().installed) await sessions.reconnect().catch(() => {});
   ready = true; receiveLink(pendingLink); pendingLink = undefined;
   const check = async () => { if (!store.data.settings.autoCheck || runtime.info().updating) return; try { await runtime.check(); if (store.data.settings.autoUpdate && runtime.info().updateAvailable && !sessions.busy) await runtime.update(() => sessions.busy || workspace.deleting, reconnect); } catch { /* Updates are optional; the current runtime stays usable offline. */ } };
   setTimeout(() => { void check(); }, 5000).unref(); setInterval(() => { void check(); }, 6 * 60 * 60 * 1000).unref();
 });
-app.on('before-quit', () => { runtime?.shutdown(); sessions?.clearAttachments(); sessions?.rpc?.kill(); });
+app.on('before-quit', () => { runtime?.shutdown(); sessions?.clearAttachments(); sessions?.kill(); });
 app.on('window-all-closed', () => app.quit());

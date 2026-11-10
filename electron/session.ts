@@ -8,18 +8,20 @@ import { RuntimeManager } from './runtime';
 import { discardAttachment } from './attachments';
 
 export const emptySnapshot = (): Snapshot => ({ connected: false, busy: false, thinkingLevel: 'off', models: [], levels: [], commands: [], messages: [] });
-export class Sessions {
+export class SessionChannel {
   rpc?: PiRpc;
   snapshot = emptySnapshot();
   private connecting = false;
   private starting = false;
+  private settling = false;
   private healthy = false;
+  private suspension?: Promise<void>;
   pendingUI = new Map<string, PiEvent>();
   attachments = new Map<string, { info: Attachment; path: string }>();
-  constructor(private store: Store, private runtime: RuntimeManager, private extension: string, private sendEvent: (event: DesktopEvent) => void) {}
-  get busy() { return this.connecting || this.starting || !!this.rpc?.busy; }
+  constructor(private store: Store, private runtime: RuntimeManager, private extension: string, private sendEvent: (event: DesktopEvent) => void, private settled: (channel: SessionChannel) => void = () => {}) {}
+  get busy() { return this.connecting || this.starting || this.settling || !!this.rpc?.busy; }
   private emit(record: PiEvent, threadId = this.snapshot.threadId) { this.sendEvent({ kind: 'pi', threadId, record }); }
-  private env() {
+  environment() {
     const env: NodeJS.ProcessEnv = { ...process.env, PI_CODING_AGENT_DIR: this.store.agentDir, SAINT_ACCESS_MODE: this.store.data.settings.access };
     const names: Record<string, string> = { anthropic: 'ANTHROPIC_API_KEY', openai: 'OPENAI_API_KEY', deepseek: 'DEEPSEEK_API_KEY', custom: 'SAINT_CUSTOM_API_KEY' };
     const providers: Record<string, unknown> = {};
@@ -40,7 +42,8 @@ export class Sessions {
     this.snapshot = { ...this.snapshot, connected: false, busy: true };
     this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot });
     try {
-      await this.rpc?.close(); this.pendingUI.clear(); this.clearAttachments(); this.healthy = false;
+      await this.suspension;
+      await this.rpc?.close(); this.pendingUI.clear(); this.healthy = false;
       const thread = threadId ? this.store.thread(threadId) : undefined;
       const project = thread ? this.store.projectFor(thread) : undefined;
       const cwd = project?.path || path.join(this.store.directory, 'engine-workspace');
@@ -58,14 +61,14 @@ export class Sessions {
         if (this.store.data.settings.defaultThinking) args.push('--thinking', this.store.data.settings.defaultThinking);
       }
       for (const skill of this.store.data.skillPaths.filter(p => fs.existsSync(p))) args.push('--skill', skill);
-      const rpc = new PiRpc(launch.executable, args, cwd, { ...this.env(), ...launch.env }); this.rpc = rpc;
-      this.snapshot = { ...emptySnapshot(), threadId };
+      const rpc = new PiRpc(launch.executable, args, cwd, { ...this.environment(), ...launch.env }); this.rpc = rpc;
+      this.snapshot = { ...emptySnapshot(), threadId, busy: true };
       rpc.on('record', record => { if (this.rpc === rpc && !rpc.closing) this.handle(record, threadId); });
       rpc.on('closed', error => { if (this.rpc !== rpc) return; this.starting = false; this.healthy = false; this.snapshot.connected = false; this.snapshot.busy = false; this.snapshot.error = error.message; this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot }); });
       await rpc.start();
       const commands = await rpc.request('get_commands');
       if (!commands.commands?.some((c: { name: string }) => c.name === 'saint-access')) throw new Error('Pi 未加载 Saint 权限扩展，暂不能执行任务。');
-      this.healthy = true; if (thread) { this.store.data.activeThreadId = thread.id; this.store.save(); }
+      this.healthy = true;
       return await this.refresh();
     } catch (error) {
       await this.rpc?.close(); this.snapshot = { ...emptySnapshot(), threadId, error: (error as Error).message }; this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot }); throw error;
@@ -75,16 +78,46 @@ export class Sessions {
     if (this.busy) throw new Error('请等待当前任务结束');
     this.connecting = true;
     try {
-      await this.rpc?.close(); this.rpc = undefined; this.pendingUI.clear(); this.clearAttachments(); this.healthy = false;
+      await this.rpc?.close(); this.rpc = undefined; this.pendingUI.clear(); this.healthy = false;
       this.store.data.activeThreadId = undefined; this.snapshot = emptySnapshot();
       this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot });
     } finally { this.connecting = false; }
   }
-  async reconnect() { await this.connect(this.store.data.activeThreadId); }
+  suspend() {
+    if (this.suspension) return this.suspension;
+    const rpc = this.rpc;
+    // Detach before awaiting shutdown: a returning conversation must wait for
+    // this process, never reuse it or have its new process cleared afterward.
+    this.rpc = undefined; this.healthy = false; this.snapshot.connected = false;
+    this.suspension = (async () => { await rpc?.close(); })().finally(() => { this.suspension = undefined; });
+    return this.suspension;
+  }
+  publish() {
+    this.snapshot = { ...this.snapshot, attachments: [...this.attachments.values()].map(a => a.info), requests: [...this.pendingUI.values()] };
+    this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot });
+  }
   private handle(record: PiEvent, threadId?: string) {
     if (record.type === 'extension_ui_request' && ['confirm','select','input','editor'].includes(record.method)) this.pendingUI.set(record.id, record);
     if (record.type === 'agent_start') { this.starting = false; this.snapshot.busy = true; }
-    if (record.type === 'agent_settled') { this.starting = false; this.snapshot.busy = false; this.pendingUI.clear(); void this.refresh().catch(e => this.emit({ type: 'saint_error', message: e.message })); }
+    if (record.type === 'agent_settled') {
+      this.starting = false; this.settling = true; this.snapshot.busy = false; this.pendingUI.clear(); this.snapshot.streaming = [];
+      // Keep the process until its final messages/statistics have been read, even
+      // if navigation moves it into the background during this round trip.
+      void this.refresh().then(() => { this.settling = false; this.settled(this); this.publish(); }).catch(e => { this.settling = false; this.emit({ type: 'saint_error', message: e.message }); this.publish(); });
+    }
+    if (record.type === 'message_update') {
+      const e = record.assistantMessageEvent;
+      if (e) { const blocks = this.snapshot.streaming || []; const i = e.contentIndex ?? 0;
+        if (e.type === 'text_delta') blocks[i] = { type: 'text', text: (blocks[i]?.text || '') + e.delta };
+        if (e.type === 'thinking_delta') blocks[i] = { type: 'thinking', thinking: (blocks[i]?.thinking || '') + e.delta };
+        if (e.type === 'text_end') blocks[i] = { type: 'text', text: e.content };
+        if (e.type === 'thinking_end') blocks[i] = { type: 'thinking', thinking: e.content };
+        this.snapshot.streaming = blocks;
+      }
+    }
+    if (record.type === 'tool_execution_start') this.snapshot.tools = { ...this.snapshot.tools, [record.toolCallId]: record };
+    if (record.type === 'tool_execution_end') { const tools = { ...this.snapshot.tools }; delete tools[record.toolCallId]; this.snapshot.tools = tools; }
+    if (record.type === 'message_end') { this.snapshot.messages = [...this.snapshot.messages, record.message]; if (record.message?.role === 'assistant') this.snapshot.streaming = []; }
     if (record.type === 'message_end' && threadId) {
       const thread = this.store.thread(threadId); thread.updatedAt = Date.now(); this.store.save();
       void this.rpc?.request('get_session_stats').then(stats => { this.snapshot.stats = stats; this.emit({ type: 'saint_stats', stats }, threadId); }).catch(() => {});
@@ -101,13 +134,13 @@ export class Sessions {
     const rpc = this.rpc;
     const [state, models, levels, commands, messages, stats] = await Promise.all([rpc.request('get_state'), rpc.request('get_available_models'), rpc.request('get_available_thinking_levels'), rpc.request('get_commands'), rpc.request('get_messages'), rpc.request('get_session_stats')]);
     if (rpc !== this.rpc) return this.snapshot;
-    this.snapshot = { connected: true, busy: this.connecting || rpc.busy || this.starting || !!state.isStreaming || !!state.isCompacting, threadId: this.snapshot.threadId, model: this.model(state.model), thinkingLevel: state.thinkingLevel, models: models.models.map((m: unknown) => this.model(m)).filter(Boolean), levels: levels.levels, commands: commands.commands, messages: messages.messages, stats, sessionFile: state.sessionFile };
+    this.snapshot = { ...this.snapshot, connected: true, busy: this.connecting || rpc.busy || this.starting || !!state.isStreaming || !!state.isCompacting, threadId: this.snapshot.threadId, model: this.model(state.model), thinkingLevel: state.thinkingLevel, models: models.models.map((m: unknown) => this.model(m)).filter(Boolean), levels: levels.levels, commands: commands.commands, messages: messages.messages, stats, sessionFile: state.sessionFile };
     if (this.snapshot.threadId) { const thread = this.store.thread(this.snapshot.threadId); thread.sessionFile = state.sessionFile; this.store.save(); }
-    this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot }); return this.snapshot;
+    this.publish(); return this.snapshot;
   }
   async prompt(text: string, skills: string[], attachments: string[]) {
     if (!this.snapshot.threadId) throw new Error('请先选择工作空间，再发送任务');
-    if (!this.rpc?.alive || !this.healthy) throw new Error('引擎未就绪，请重新连接');
+    if (!this.rpc?.alive || this.rpc.closing || !this.healthy) throw new Error('引擎未就绪，请重新连接');
     if (this.busy) throw new Error('请等待当前任务完成，或先停止');
     if (!this.snapshot.model || !this.snapshot.models.some(m => m.provider === this.snapshot.model?.provider && m.id === this.snapshot.model.id)) throw new Error('请先在设置中连接模型，并在输入框选择模型');
     if (this.runtime.info().updating) throw new Error('引擎更新中，请稍候');
@@ -135,7 +168,7 @@ export class Sessions {
     this.snapshot.busy = true; this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot });
     try {
       const result = await this.rpc.request('prompt', { message, ...(images.length ? { images } : {}) }, 60_000);
-      const thread = this.store.thread(); if (thread.title === '新建会话') { thread.title = text.replace(/\s+/g, ' ').slice(0, 38); this.store.save(); this.sendEvent({ kind: 'data' }); }
+      const thread = this.store.thread(this.snapshot.threadId); if (thread.title === '新建会话' && thread.titleSource !== 'manual') { thread.title = text.replace(/\s+/g, ' ').slice(0, 38); thread.titleSource = 'fallback'; this.store.save(); this.sendEvent({ kind: 'data' }); }
       if (attachments.length) {
         thread.attachmentPaths = [...new Set([...(thread.attachmentPaths || []), ...attachments.map(id => this.attachments.get(id)!.path)])];
         this.store.save();

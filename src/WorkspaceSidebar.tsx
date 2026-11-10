@@ -7,11 +7,11 @@ import { IconButton, Modal } from './components';
 const threadMime = 'application/x-saint-thread';
 type Target = { kind: 'project' | 'thread'; id: string };
 type Props = {
-  data?: Bootstrap; activeId?: string; busy: boolean; running: boolean;
+  data?: Bootstrap; activeId?: string; busy: boolean; navigationBusy: boolean; running: boolean;
   onOpen: (id: string) => void; onAdd: () => void;
   onAction: (action: string, payload: unknown, notice?: string) => Promise<boolean>;
 };
-export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd, onAction }: Props) {
+export function WorkspaceSidebar({ data, activeId, busy, navigationBusy, running, onOpen, onAdd, onAction }: Props) {
   const [menu, setMenu] = useState<(Target & { x: number; y: number }) | null>(null);
   const [detail, setDetail] = useState<Target | null>(null);
   const [title, setTitle] = useState('');
@@ -62,20 +62,20 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
   const deletionProject = deletion?.kind === 'project' ? data?.projects.find(p => p.id === deletion.id) : undefined;
   const deletionCount = deletion?.kind === 'project' ? threads.filter(t => t.projectId === deletion.id).length : 1;
   return <>
-    <div className="projectlist"><div className="sectionlabel">工作空间<IconButton title="添加工作空间" onClick={onAdd} disabled={busy}><Plus /></IconButton></div>
+    <div className="projectlist"><div className="sectionlabel">工作空间<IconButton title="添加工作空间" onClick={onAdd} disabled={navigationBusy}><Plus /></IconButton></div>
       {projects.map(p => <div className={`projectgroup ${dropTarget === p.id ? 'droptarget' : ''}`} key={p.id} data-project-id={p.id}
         onDragOver={e => { if (busy || !e.dataTransfer.types.includes(threadMime) || threads.find(t => t.id === dragging)?.projectId === p.id) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDropTarget(p.id); }}
         onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(undefined); }}
         onDrop={e => { if (!e.dataTransfer.types.includes(threadMime)) return; e.preventDefault(); e.stopPropagation(); const id = e.dataTransfer.getData(threadMime); setDropTarget(undefined); if (!busy && threads.some(t => t.id === id && !t.archivedAt)) void move(id, p.id); }}>
         <div className="projectheading" onContextMenu={e => context(e, { kind: 'project', id: p.id })} onKeyDown={e => keyboardContext(e, { kind: 'project', id: p.id })}>
-          <Folder /><button disabled={busy} title={p.path} onClick={() => { const t = threads.find(t => t.projectId === p.id && !t.archivedAt); if (t) onOpen(t.id); else void onAction('thread.new', { projectId: p.id }); }}>{p.name}</button>
+          <Folder /><button disabled={navigationBusy} title={p.path} onClick={() => { const t = threads.find(t => t.projectId === p.id && !t.archivedAt); if (t) onOpen(t.id); else void onAction('thread.new', { projectId: p.id }); }}>{p.name}</button>
           <IconButton title={`${p.name} 项目菜单`} onClick={() => { const box = document.querySelector(`[data-project-id="${p.id}"]`)!.getBoundingClientRect(); setMenu({ kind: 'project', id: p.id, x: box.right - 10, y: box.top + 25 }); }}><Ellipsis /></IconButton>
-          <IconButton title={`在 ${p.name} 新建会话`} disabled={busy} onClick={() => void onAction('thread.new', { projectId: p.id })}><Plus /></IconButton>
+          <IconButton title={`在 ${p.name} 新建会话`} disabled={navigationBusy} onClick={() => void onAction('thread.new', { projectId: p.id })}><Plus /></IconButton>
         </div>
         {threads.filter(t => t.projectId === p.id && !t.archivedAt).map(t => <div className={`threadrow ${dragging === t.id ? 'dragging' : ''}`} key={t.id} data-thread-id={t.id}
           onContextMenu={e => context(e, { kind: 'thread', id: t.id })} onKeyDown={e => keyboardContext(e, { kind: 'thread', id: t.id })}>
-          <button className={`thread ${activeId === t.id ? 'active' : ''}`} title={t.title} disabled={busy} onClick={() => onOpen(t.id)} draggable={!busy}
-            onDragStart={e => { e.dataTransfer.setData(threadMime, t.id); e.dataTransfer.effectAllowed = 'move'; setDragging(t.id); setMenu(null); }} onDragEnd={() => { setDropTarget(undefined); setDragging(undefined); }}><span>{t.title}</span>{activeId === t.id && running && <i />}</button>
+          <button className={`thread ${activeId === t.id ? 'active' : ''}`} title={t.title} disabled={navigationBusy} onClick={() => onOpen(t.id)} draggable={!busy}
+            onDragStart={e => { e.dataTransfer.setData(threadMime, t.id); e.dataTransfer.effectAllowed = 'move'; setDragging(t.id); setMenu(null); }} onDragEnd={() => { setDropTarget(undefined); setDragging(undefined); }}><span>{t.title}</span>{data?.activities?.find(a=>a.id===t.id)?.waiting?<small className="threadstatus waiting" title="等待你的确认">待确认</small>:data?.activities?.find(a=>a.id===t.id)?.busy?<i title="正在运行"/>:data?.activities?.find(a=>a.id===t.id)?.naming?<small className="threadstatus">命名中</small>:null}</button>
           <button className="threadmore iconbutton" aria-label={`${t.title} 会话菜单`} onClick={e => context(e, { kind: 'thread', id: t.id })}><Ellipsis /></button>
         </div>)}
         {dropTarget === p.id && <div className="drophint">松开以迁移至 {p.name}</div>}
@@ -90,11 +90,11 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
     }}>
       <div className="menutitle">{name(menu)}</div>
       {menu.kind === 'project' ? <>
-        <button role="menuitem" disabled={busy} onClick={() => { setMenu(null); void onAction('thread.new', { projectId: menu.id }); }}><Plus />新建会话</button>
+        <button role="menuitem" disabled={navigationBusy} onClick={() => { setMenu(null); void onAction('thread.new', { projectId: menu.id }); }}><Plus />新建会话</button>
         <button role="menuitem" onClick={() => void action('project.reveal', menu)}><FolderOpen />在文件夹中打开</button>
         <button role="menuitem" onClick={() => void action('project.copyPath', menu, '项目路径已复制')}><Copy />复制项目路径</button>
       </> : <>
-        <button role="menuitem" disabled={busy} onClick={() => { setMenu(null); onOpen(menu.id); }}><FolderOpen />打开会话</button>
+        <button role="menuitem" disabled={navigationBusy} onClick={() => { setMenu(null); onOpen(menu.id); }}><FolderOpen />打开会话</button>
         <button role="menuitem" disabled={busy || projects.length < 2} onClick={() => { setMoving(menu.id); setMenu(null); }}><ArrowRightLeft />迁移到项目…</button>
         <button role="menuitem" onClick={() => void action('thread.copyLink', menu, '会话链接已复制，可在本机 Saint Harness 中打开')}><Link />复制会话链接</button>
       </>}
@@ -104,7 +104,7 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
     {detail && createPortal(<Modal title={detail.kind === 'project' ? '项目详情' : '会话详情'} subtitle="名称、位置与工作记录。" onClose={() => setDetail(null)}>
       <label className="formrow">{detail.kind === 'project' ? '项目名称' : '会话名称'}<input value={title} maxLength={100} onChange={e => setTitle(e.target.value)} /></label>
       <dl className="workspacedetails"><dt>项目位置</dt><dd>{detailProject?.path}</dd>{detailThread && <><dt>创建时间</dt><dd>{new Date(detailThread.createdAt).toLocaleString()}</dd><dt>最近更新</dt><dd>{new Date(detailThread.updatedAt).toLocaleString()}</dd></>}<dt>{detail.kind === 'project' ? '项目 ID' : '会话 ID'}</dt><dd>{detail.id}</dd></dl>
-      <div className="modalactions"><button className="outlinebutton" onClick={() => setDetail(null)}>关闭</button><button className="primarybutton" disabled={busy || !title.trim()} onClick={async () => { if (await onAction(`${detail.kind}.rename`, { id: detail.id, title }, '名称已更新')) setDetail(null); }}>保存名称</button></div>
+      <div className="modalactions"><button className="outlinebutton" onClick={() => setDetail(null)}>关闭</button><button className="primarybutton" disabled={(detail.kind === 'thread' ? navigationBusy : busy) || !title.trim()} onClick={async () => { if (await onAction(`${detail.kind}.rename`, { id: detail.id, title }, '名称已更新')) setDetail(null); }}>保存名称</button></div>
     </Modal>, document.body)}
     {moving && createPortal(<Modal title="迁移会话" subtitle="保留完整对话历史，后续任务使用目标项目目录。项目文件不会移动。" onClose={() => setMoving(undefined)}>
       <div className="workspacechoices">{projects.filter(p => p.id !== threads.find(t => t.id === moving)?.projectId).map(p => <button key={p.id} disabled={busy} onClick={() => void move(moving, p.id)}><Folder /><span><strong>{p.name}</strong><small>{p.path}</small></span><ArrowRightLeft /></button>)}</div>

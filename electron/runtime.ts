@@ -13,7 +13,13 @@ export class RuntimeManager {
   private message?: string;
   private candidates: EngineCandidate[] = [];
   private activeInstall?: ReturnType<typeof spawn>;
-  constructor(readonly bundled: string, private node: string, private extension: string, private store: Store, private notify: (info: RuntimeInfo) => void) { this.scan(); }
+  constructor(readonly bundled: string, private node: string, private extension: string, private store: Store, private notify: (info: RuntimeInfo) => void, private disconnect: () => Promise<void> = async () => {}) {
+    // Prefer the copy shipped with Saint, while keeping explicit external choices.
+    if (!store.data.externalCli && this.version(bundled) !== '未安装' && store.data.runtimePath && store.data.runtimePath !== bundled) {
+      store.data.runtimePath = bundled; store.data.previousRuntime = fs.existsSync(bundled + '.previous') ? bundled + '.previous' : undefined; store.save();
+    }
+    this.scan();
+  }
   get root() { return this.store.data.runtimePath || this.bundled; }
   packageFile(root = this.root) { return path.join(root, 'node_modules', PACKAGE, 'package.json'); }
   version(root = this.root) { try { return resolveEngine(root).version; } catch { return '未安装'; } }
@@ -23,14 +29,13 @@ export class RuntimeManager {
   info(): RuntimeInfo {
     const selected = this.selected();
     const current = this.store.data.externalCli ? selected?.version || '未安装' : this.version();
-    return { current, installed: !!selected, candidates: this.candidates, latest: this.latest, previous: this.store.data.previousRuntime ? this.version(this.store.data.previousRuntime) : undefined, updating: this.updating, message: this.message, external: !!this.store.data.externalCli, path: this.store.data.externalCli || this.root, updateAvailable: !this.store.data.externalCli && !!selected && !!this.latest && !!semver.valid(current) && semver.gt(this.latest, current) };
+    return { current, installed: !!selected, candidates: this.candidates, latest: this.latest, previous: !this.store.data.externalCli && this.store.data.previousRuntime === this.root + '.previous' ? this.version(this.store.data.previousRuntime) : undefined, updating: this.updating, message: this.message, external: !!this.store.data.externalCli, path: this.store.data.externalCli || this.root, updateAvailable: !this.store.data.externalCli && !!selected && !!this.latest && !!semver.valid(current) && semver.gt(this.latest, current) };
   }
   private scan() {
     this.candidates = discoverEngines([
       ...(this.store.data.externalCli ? [{path:this.store.data.externalCli,source:'已选择的本地引擎'}] : []),
-      {path:this.root,source:'当前引擎',managedRoot:this.root},
+      {path:this.root,source:this.root===this.bundled?'应用内置 · 当前引擎':'当前引擎',managedRoot:this.root},
       {path:this.bundled,source:'应用内置',managedRoot:this.bundled},
-      ...(this.store.data.previousRuntime ? [{path:this.store.data.previousRuntime,source:'上一版本',managedRoot:this.store.data.previousRuntime}] : []),
       ...localSearchPaths().map(p=>({path:p,source:'系统安装'})),
     ]);
   }
@@ -63,11 +68,10 @@ export class RuntimeManager {
   }
   private async activate(candidate: EngineCandidate, reconnect: () => Promise<void>, installDirectory?: string) {
     const old = {runtimePath:this.store.data.runtimePath,externalCli:this.store.data.externalCli,previousRuntime:this.store.data.previousRuntime,runtimeInstallDirectory:this.store.data.runtimeInstallDirectory};
-    const oldRoot = this.root;
     this.store.data.externalCli = candidate.managedRoot ? undefined : candidate.cli;
     if (candidate.managedRoot) {
       this.store.data.runtimePath = candidate.managedRoot;
-      if (oldRoot !== candidate.managedRoot && this.version(oldRoot) !== '未安装') this.store.data.previousRuntime = oldRoot;
+      this.store.data.previousRuntime = fs.existsSync(candidate.managedRoot + '.previous') ? candidate.managedRoot + '.previous' : undefined;
     }
     if (installDirectory) this.store.data.runtimeInstallDirectory = installDirectory;
     this.store.save();
@@ -91,44 +95,91 @@ export class RuntimeManager {
     if (!cli) throw new Error('未找到下载组件。请使用完整桌面包，或安装 Node.js 24+ 后重试；也可以连接已下载的 Pi。');
     return cli;
   }
-  private async download(destination: string) {
-    const npmCli = this.npmCli(); await this.check(); const version = this.latest!;
-    fs.mkdirSync(destination, {recursive:true});
-    const stage = fs.mkdtempSync(path.join(destination, `Saint-Pi-${version}-`));
-    fs.writeFileSync(path.join(stage,'package.json'), JSON.stringify({private:true,dependencies:{[PACKAGE]:version}}));
-    this.report(`正在下载 Pi ${version}… 保存位置：${stage}`);
-    await new Promise<void>((resolve,reject) => {
-      const child = spawn(this.node, [npmCli,'install','--omit=dev','--no-fund','--no-audit','--registry=https://registry.npmjs.org'], {cwd:stage,windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe']});
-      this.activeInstall = child; let logs = '';
-      const collect = (chunk:Buffer) => { logs = (logs + chunk).slice(-6000); };
-      child.stdout?.on('data',collect); child.stderr?.on('data',collect);
-      child.on('error', error=>{this.activeInstall=undefined;reject(error);});
-      child.on('exit',code=>{this.activeInstall=undefined;fs.writeFileSync(path.join(stage,'install.log'),logs);code===0?resolve():reject(new Error(`Pi 下载失败 (${code})，当前引擎未更改。安装记录保留在 ${path.join(stage,'install.log')}`));});
-    });
-    const candidate = {...resolveEngine(stage),managedRoot:stage};
-    this.report('下载完成，正在验证引擎与权限扩展…'); await this.verify(candidate); return candidate;
+  private removeManagedDirectory(directory: string, parent: string, prefix: string) {
+    const resolved = path.resolve(directory), base = path.resolve(parent);
+    if (path.dirname(resolved) !== base || !path.basename(resolved).startsWith(prefix) || fs.lstatSync(resolved).isSymbolicLink()) throw new Error('无法清理不属于此次更新的目录');
+    fs.rmSync(resolved, {recursive:true,force:true});
   }
-  async install(destination: string, isBusy: () => boolean, reconnect: () => Promise<void>) {
-    return this.operation(isBusy, async()=>{
-      const candidate = await this.download(destination); await this.activate(candidate,reconnect,destination);
-      this.report(`Pi ${candidate.version} 已下载并连接。`);
-    });
+  private async download(target: string) {
+    const npmCli = this.npmCli(); if (!this.latest) await this.check(); const version = this.latest!;
+    const parent = path.dirname(target); fs.mkdirSync(parent,{recursive:true});
+    const prefix = `.${path.basename(target)}.update-`, stage = fs.mkdtempSync(path.join(parent,prefix));
+    const manifest = fs.existsSync(path.join(target,'package.json')) ? JSON.parse(fs.readFileSync(path.join(target,'package.json'),'utf8')) : {private:true};
+    fs.writeFileSync(path.join(stage,'package.json'), JSON.stringify({...manifest,private:true,dependencies:{...manifest.dependencies,[PACKAGE]:version}}));
+    this.report(`正在准备 Pi ${version}，完成后更新原目录：${target}`);
+    try {
+      await new Promise<void>((resolve,reject) => {
+        const child = spawn(this.node,[npmCli,'install','--omit=dev','--no-fund','--no-audit','--registry=https://registry.npmjs.org'],{cwd:stage,windowsHide:true,env:{...process.env,ELECTRON_RUN_AS_NODE:'1'},stdio:['ignore','pipe','pipe']});
+        this.activeInstall=child; let logs='';
+        const collect=(chunk:Buffer)=>{logs=(logs+chunk).slice(-6000);};child.stdout?.on('data',collect);child.stderr?.on('data',collect);
+        child.on('error',error=>{this.activeInstall=undefined;reject(error);});
+        child.on('exit',code=>{this.activeInstall=undefined;fs.writeFileSync(path.join(stage,'install.log'),logs);code===0?resolve():reject(new Error(`Pi 下载失败 (${code})`));});
+      });
+      const candidate={...resolveEngine(stage),managedRoot:stage};this.report('正在验证新引擎，现有安装仍保留…');await this.verify(candidate);return candidate;
+    } catch(error) {
+      const log=path.join(stage,'install.log'); if(fs.existsSync(log))fs.copyFileSync(log,path.join(this.store.directory,'pi-install-failure.log'));
+      this.removeManagedDirectory(stage,parent,prefix);throw error;
+    }
   }
-  async update(isBusy: () => boolean, reconnect: () => Promise<void>) {
-    return this.operation(isBusy, async()=>{
-      if (this.store.data.externalCli) throw new Error('外部 Pi 请通过原安装方式更新，或下载由 Saint 管理的版本。');
-      await this.check(); if (!this.info().updateAvailable) return;
-      const destination = this.store.data.runtimeInstallDirectory || path.join(this.store.directory,'runtimes');
-      const candidate = await this.download(destination); await this.activate(candidate,reconnect);
-      this.report(`已更新至 Pi ${candidate.version}，上一版本可恢复。`);
-    });
+  private async replaceInPlace(target: string, candidate: EngineCandidate, reconnect: () => Promise<void>) {
+    const stage=candidate.managedRoot!, backup=target+'.previous', stale=target+'.superseded';
+    const hadTarget=fs.existsSync(target), hadBackup=fs.existsSync(backup);
+    const old={runtimePath:this.store.data.runtimePath,externalCli:this.store.data.externalCli,previousRuntime:this.store.data.previousRuntime};
+    let oldMoved=false,newMoved=false,backupMoved=false;
+    try {
+      if(fs.existsSync(stale))throw new Error(`上次更新的恢复目录仍存在，请先检查 ${stale}`);
+      if(hadBackup && old.previousRuntime !== backup)throw new Error(`备份位置已被其他目录占用：${backup}`);
+      await this.disconnect();
+      if(hadBackup){fs.renameSync(backup,stale);backupMoved=true;}
+      if(hadTarget){fs.renameSync(target,backup);oldMoved=true;}
+      fs.renameSync(stage,target);newMoved=true;
+      this.store.data.runtimePath=target;this.store.data.externalCli=undefined;this.store.data.previousRuntime=hadTarget?backup:undefined;this.store.save();
+      await reconnect();
+    } catch(error) {
+      await this.disconnect();
+      if(newMoved)fs.renameSync(target,stage);
+      if(oldMoved)fs.renameSync(backup,target);
+      if(backupMoved)fs.renameSync(stale,backup);
+      Object.assign(this.store.data,old);this.store.save();if(this.selected())await reconnect().catch(()=>{});
+      throw new Error(`更新失败，已恢复原目录和设置：${(error as Error).message}`);
+    } finally {
+      if(fs.existsSync(stage))this.removeManagedDirectory(stage,path.dirname(target),`.${path.basename(target)}.update-`);
+    }
+    if(backupMoved)this.removeManagedDirectory(stale,path.dirname(target),path.basename(target)+'.superseded');
   }
-  async rollback(isBusy: () => boolean, reconnect: () => Promise<void>) {
+  async install(destination: string,isBusy:()=>boolean,reconnect:()=>Promise<void>) {
+    if(this.info().installed)return this.connectExisting(this.store.data.externalCli||this.root,isBusy,reconnect);
     return this.operation(isBusy,async()=>{
-      const target = this.store.data.previousRuntime; if (!target) throw new Error('没有可恢复的旧版本');
-      this.report('正在验证并恢复上一版本…');
-      const candidate = {...resolveEngine(target),managedRoot:target}; await this.verify(candidate);
-      await this.activate(candidate,reconnect); this.report(`已恢复 Pi ${candidate.version}`);
+      const target=path.join(destination,'Saint-Pi');
+      if(fs.existsSync(target)) { const existing={...resolveEngine(target),managedRoot:target};await this.verify(existing);await this.activate(existing,reconnect);return; }
+      await this.check();const candidate=await this.download(target);await this.replaceInPlace(target,candidate,reconnect);
+      this.store.data.runtimeInstallDirectory=destination;this.store.save();this.report(`Pi ${candidate.version} 已安装并连接。`);
+    });
+  }
+  async update(isBusy:()=>boolean,reconnect:()=>Promise<void>) {
+    return this.operation(isBusy,async()=>{
+      if(this.store.data.externalCli)throw new Error('外部 Pi 请通过原安装方式更新；Saint 不会覆盖其他工具的安装。');
+      await this.check();if(!this.info().updateAvailable)return;
+      const target=this.root,candidate=await this.download(target);await this.replaceInPlace(target,candidate,reconnect);
+      this.report(`Pi ${candidate.version} 已更新，安装位置保持不变。`);
+    });
+  }
+  async rollback(isBusy:()=>boolean,reconnect:()=>Promise<void>) {
+    return this.operation(isBusy,async()=>{
+      const target=this.root,backup=target+'.previous';
+      if(this.store.data.previousRuntime!==backup||!fs.existsSync(backup))throw new Error('没有可恢复的原目录备份');
+      await this.verify({...resolveEngine(backup),managedRoot:backup});
+      const temporary=target+'.rollback';if(fs.existsSync(temporary))throw new Error('存在未完成的恢复目录，请先检查');
+      await this.disconnect();let moved=false,swapped=false;
+      try {
+        fs.renameSync(target,temporary);moved=true;fs.renameSync(backup,target);swapped=true;fs.renameSync(temporary,backup);
+        await reconnect();this.report(`已恢复 Pi ${this.version()}，安装位置保持不变。`);
+      } catch(error) {
+        await this.disconnect();
+        if(swapped){if(!fs.existsSync(temporary))fs.renameSync(backup,temporary);fs.renameSync(target,backup);}
+        if(moved)fs.renameSync(temporary,target);
+        await reconnect().catch(()=>{});throw new Error(`恢复失败，已还原当前引擎：${(error as Error).message}`);
+      }
     });
   }
   shutdown() { if (this.activeInstall?.pid) { if (process.platform === 'win32') spawn('taskkill.exe',['/pid',String(this.activeInstall.pid),'/t','/f'],{windowsHide:true,stdio:'ignore'}); else this.activeInstall.kill(); } }

@@ -24,7 +24,7 @@ let app; const errors = [], results = [];
 const state = page => page.evaluate(() => window.saint.invoke('bootstrap'));
 async function launch() {
   app = await _electron.launch({ ...(process.env.SAINT_TEST_EXE ? { executablePath: process.env.SAINT_TEST_EXE, args: [] } : { args: [root] }), env: { ...process.env, SAINT_DATA_DIR: data } });
-  const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); await page.getByRole('button', { name: /已归档/ }).waitFor(); return page;
+  const page = await app.firstWindow(); page.on('pageerror', error => errors.push(error.message)); await page.getByRole('button', { name: /已归档/ }).waitFor(); for(let n=0;n<450;n++){const d=await state(page);if(d.snapshot.connected&&!d.snapshot.busy&&!d.navigating)break;if(n===449)throw Error('Startup connection timed out');await page.waitForTimeout(100);} return page;
 }
 try {
   let page = await launch();
@@ -78,4 +78,4 @@ try {
 } catch (error) {
   if (app) await (await app.firstWindow()).screenshot({ path: 'artifacts/delete-failure.png' }).catch(() => {});
   throw error;
-} finally { if (app) await app.close(); }
+} finally { if (app) {await app.evaluate(({dialog})=>{dialog.showMessageBox=async()=>({response:1});}).catch(()=>{});await app.close();} }

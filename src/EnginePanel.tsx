@@ -21,8 +21,8 @@ export function EnginePanel({engine, snapshot, settings, busy, onClose, onAction
       <div className="engine-setup-heading"><strong>{connected?'后端已就绪':engine?.installed?'已找到 Pi，点击即可连接':engine?.candidates.length?'发现其他 Pi 安装，可选择连接':'还没有安装 Pi？'}</strong><button className="textbutton" disabled={pending} onClick={()=>onAction('检测引擎','engine.detect')}><RefreshCw size={13}/>重新检测</button></div>
       <p>{connected?'选择工作空间和模型后，就可以开始任务。':engine?.installed?'无需先打开项目，连接后端后再选择工作空间。':'可以下载稳定版，也可以连接电脑上已安装的 Pi。'}</p>
       {engine?.installed&&!connected&&<button className="primarybutton engine-connect" disabled={pending} onClick={()=>onAction('连接 Pi','engine.connect')}><PlugZap/>连接当前 Pi 引擎</button>}
-      <div className="engine-install-actions"><button className={engine?.installed?'outlinebutton':'primarybutton'} disabled={pending} onClick={()=>onAction('下载并连接 Pi','engine.install')}><Download/>下载并连接 Pi</button><button className="outlinebutton" disabled={pending} onClick={()=>onAction('选择本地 Pi','engine.chooseFolder')}><FolderOpen/>连接已下载的 Pi</button></div>
-      <small>下载时选择保存位置；已下载时选择安装文件夹。</small>
+      <div className="engine-install-actions">{!engine?.installed&&<button className={engine?.installed?'outlinebutton':'primarybutton'} disabled={pending} onClick={()=>onAction('下载并连接 Pi','engine.install')}><Download/>下载并连接 Pi</button>}<button className="outlinebutton" disabled={pending} onClick={()=>onAction('选择本地 Pi','engine.chooseFolder')}><FolderOpen/>连接已下载的 Pi</button></div>
+      <small>{engine?.installed?(engine.external?'已连接你选择的本地引擎，请通过原安装方式更新。':'优先使用应用内置引擎，更新后安装位置不变。'):'下载时选择保存位置；已有安装可直接连接。'}</small>
       {!!engine?.candidates.length&&<details className="engine-detected"><summary>检测到 {engine.candidates.length} 个 Pi 入口</summary>{engine.candidates.map(candidate=><div className="engine-candidate" key={candidate.cli}><div><strong>{candidate.source} · {candidate.version}</strong><code title={candidate.cli}>{candidate.cli}</code></div><button className="outlinebutton" disabled={pending} onClick={()=>onAction('连接 Pi','engine.connect',{path:candidate.cli})}>连接</button></div>)}</details>}
       {snapshot.error&&!connected&&<div className="inlineerror">{snapshot.error}</div>}
     </section>
@@ -33,7 +33,7 @@ export function EnginePanel({engine, snapshot, settings, busy, onClose, onAction
       <p>只连接你信任的本地程序。常见目录之外的安装，请手动选择。</p>
     </details>
     <div className="formrow"><div>自动检查更新<small>发现 Pi 新版本时在侧栏提示</small></div><button role="switch" aria-label="自动检查更新" aria-checked={settings?.autoCheck||false} disabled={pending} className={`toggle ${settings?.autoCheck?'on':''}`} onClick={()=>onAction('保存设置','settings.save',{autoCheck:!settings?.autoCheck})}/></div>
-    <div className="formrow"><div>空闲时自动更新<small>下载到所选位置，验证后切换，保留上一版本</small></div><button role="switch" aria-label="空闲时自动更新" aria-checked={settings?.autoUpdate||false} className={`toggle ${settings?.autoUpdate?'on':''}`} disabled={pending||engine?.external||!engine?.installed} onClick={()=>onAction('保存设置','settings.save',{autoUpdate:!settings?.autoUpdate})}/></div>
+    <div className="formrow"><div>空闲时自动更新<small>在原目录更新，验证后生效，保留一份恢复备份</small></div><button role="switch" aria-label="空闲时自动更新" aria-checked={settings?.autoUpdate||false} className={`toggle ${settings?.autoUpdate?'on':''}`} disabled={pending||engine?.external||!engine?.installed} onClick={()=>onAction('保存设置','settings.save',{autoUpdate:!settings?.autoUpdate})}/></div>
     <div className="formrow"><span>更新通道</span><span className="pill">Stable · 稳定版</span></div>
     {engine?.latest&&<div className="formrow"><span>上游版本</span><strong>{engine.latest}</strong></div>}
     <div className="engineprogress" role="status">{engine?.updating?<Loader2 className="spin"/>:<RefreshCw/>}<span>{engine?.message||'已检测当前安装位置，连接后会验证引擎与权限扩展。'}</span></div>

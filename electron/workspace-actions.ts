@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Store } from './store';
-import type { Sessions } from './session';
+import type { Sessions } from './sessions';
 import { permanentlyDelete } from './permanent-delete';
 
 export function threadLink(id: string) { return `saint-harness://threads/${encodeURIComponent(id)}`; }
@@ -55,10 +55,10 @@ export class WorkspaceActions {
     thread.projectId = projectId; thread.updatedAt = Date.now();
     try {
       this.store.save();
-      if (this.store.data.activeThreadId === id) await this.sessions.connect(id);
+      if (this.store.data.activeThreadId === id) await this.sessions.connect(id, true);
     } catch (error) {
       Object.assign(thread, original); this.store.save();
-      if (this.store.data.activeThreadId === id) await this.sessions.connect(id).catch(() => {});
+      if (this.store.data.activeThreadId === id) await this.sessions.connect(id, true).catch(() => {});
       throw error;
     } finally { this.changed(); }
   }
