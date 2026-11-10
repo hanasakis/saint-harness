@@ -8,7 +8,8 @@ import { RuntimeManager } from './runtime';
 import { Sessions } from './sessions';
 import { testProviderConnection } from './provider-test';
 import { WorkspaceActions, threadLink, threadIdFromLink } from './workspace-actions';
-import { prepareAttachments, discardAttachment } from './attachments';
+import { prepareAttachments, discardAttachment, type AttachmentSource } from './attachments';
+import { readComposerClipboard } from './composer-clipboard';
 import * as files from './files';
 import type { DesktopEvent, Bootstrap, AccessMode } from '../shared/types';
 
@@ -41,13 +42,18 @@ function confirmFullAccess() {
   return new Promise<boolean>(resolve => { const id = randomUUID(); accessConfirmation = { id, resolve }; send({ kind: 'confirm-access', request: { id } }); });
 }
 function cancelAccessConfirmation() { accessConfirmation?.resolve(false); accessConfirmation = undefined; }
-async function registerAttachments(paths: string[]) {
-  const threadId = sessions.snapshot.threadId, rpc = sessions.rpc;
-  const cache = path.join(store.directory, 'attachments');
-  const added = await prepareAttachments(paths, [...sessions.attachments.values()], cache);
-  if (threadId !== sessions.snapshot.threadId || rpc !== sessions.rpc) { added.forEach(item => discardAttachment(item, cache)); throw new Error('会话已切换，请在当前会话重新添加附件'); }
-  for (const item of added) sessions.attachments.set(item.info.id, item);
-  return added.map(item => item.info);
+let addingAttachments = false;
+async function registerAttachments(paths: AttachmentSource[]) {
+  if (addingAttachments) throw new Error('正在添加附件，请稍候');
+  addingAttachments = true;
+  try {
+    const threadId = sessions.snapshot.threadId, rpc = sessions.rpc;
+    const cache = path.join(store.directory, 'attachments');
+    const added = await prepareAttachments(paths, [...sessions.attachments.values()], cache);
+    if (threadId !== sessions.snapshot.threadId || rpc !== sessions.rpc || sessions.currentBusy || sessions.navigating) { added.forEach(item => discardAttachment(item, cache)); throw new Error('会话状态已变化，请在当前会话重新添加附件'); }
+    for (const item of added) sessions.attachments.set(item.info.id, item);
+    return added.map(item => item.info);
+  } finally { addingAttachments = false; }
 }
 async function openLink(link: string) {
   requireNavigation(); const id = threadIdFromLink(link);
@@ -115,6 +121,20 @@ async function handle(action: string, payload: unknown) {
       if (result.canceled) return []; requireCurrentIdle(); return registerAttachments(result.filePaths);
     }
     case 'attachments.add': { requireCurrentIdle(); const { paths } = z.object({ paths: z.array(z.string().min(1).max(4000)).min(1).max(10) }).parse(payload); return registerAttachments(paths); }
+    case 'composer.paste': {
+      const { threadId, textOnly } = z.object({ threadId: z.string().optional(), textOnly: z.boolean().optional() }).parse(payload);
+      const rpc = sessions.rpc;
+      const value = await readComposerClipboard(textOnly);
+      if (threadId !== sessions.snapshot.threadId || rpc !== sessions.rpc) throw new Error('会话已切换，请重新粘贴');
+      if (!value.sources.length) return { text: value.text, attachments: [] };
+      requireCurrentIdle();
+      if (!threadId) throw new Error('请先打开一个工作空间，再添加附件');
+      return { text: '', attachments: await registerAttachments(value.sources) };
+    }
+    case 'composer.edit': {
+      const { command } = z.object({ command: z.enum(['undo','redo','cut','copy','selectAll']) }).parse(payload);
+      window!.webContents[command](); return true;
+    }
     case 'attachments.remove': { const { id } = idSchema.parse(payload); sessions.removeAttachment(id); return true; }
     case 'skills.add': {
       requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择技能的 SKILL.md 文件', properties: ['openFile'], filters: [{ name: 'Skill', extensions: ['md'] }] }); if (result.canceled) return false;

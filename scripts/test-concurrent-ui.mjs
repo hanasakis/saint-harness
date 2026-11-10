@@ -43,7 +43,7 @@ try{
  assert.equal((await state(p)).threads.find(t=>t.id===b).title,'我手动命名的 B');assert.equal(titles.filter(t=>t.label==='A').length,1);assert.equal(titles.filter(t=>t.label==='B').length,1);
  assert.ok(titles.every(t=>!t.r.tools?.length),'Title generation must not expose tools');
  assert.ok(titles.find(t=>t.label==='A').r.messages.some(m=>JSON.stringify(m.content).includes('任务 A完成。')),'Title sees both sides of the conversation');
- await p.locator('.cachemetric').getByText('80.0%',{exact:true}).waitFor();assert.ok(await p.locator('.usage .cachemetric').count());
+ await p.locator('.cachemetric').getByText('80.0%',{exact:true}).waitFor();assert.ok(await p.locator('.usagegroup .cachemetric').count());
  fs.mkdirSync('artifacts',{recursive:true});await p.screenshot({path:'artifacts/concurrent-titles-cache.png',animations:'disabled'});
  results.push('new conversation and two simultaneous real Pi streams; switching preserves partial replies; background completion never steals selection');
  results.push('one isolated model title request after first reply; assistant content included; manual rename wins the race; 80% cache rate is beside session tokens');
