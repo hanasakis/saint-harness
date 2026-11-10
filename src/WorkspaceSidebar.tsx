@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
-import { Archive, ArrowRightLeft, Copy, Ellipsis, Folder, FolderOpen, Info, Link, Plus, RotateCcw } from 'lucide-react';
+import { Archive, ArrowRightLeft, Copy, Ellipsis, Folder, FolderOpen, Info, Link, Plus, RotateCcw, Trash2, AlertTriangle, Loader2 } from 'lucide-react';
 import type { Bootstrap } from '../shared/types';
 import { IconButton, Modal } from './components';
 
@@ -17,6 +17,7 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
   const [title, setTitle] = useState('');
   const [moving, setMoving] = useState<string>();
   const [archives, setArchives] = useState(false);
+  const [deletion, setDeletion] = useState<Target | null>(null);
   const [dropTarget, setDropTarget] = useState<string>();
   const [dragging, setDragging] = useState<string>();
   const menuRef = useRef<HTMLDivElement>(null);
@@ -42,9 +43,9 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
     return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', key, true); window.removeEventListener('resize', dismiss); window.removeEventListener('blur', dismiss); document.removeEventListener('scroll', scroll, true); };
   }, [menu]);
   useEffect(() => {
-    const key = (e: globalThis.KeyboardEvent) => { if (e.key === 'Escape' && (detail || moving || archives)) { e.stopPropagation(); setDetail(null); setMoving(undefined); setArchives(false); } };
+    const key = (e: globalThis.KeyboardEvent) => { if (e.key !== 'Escape') return; if (deletion) { e.stopPropagation(); if (!busy) setDeletion(null); } else if (detail || moving || archives) { e.stopPropagation(); setDetail(null); setMoving(undefined); setArchives(false); } };
     document.addEventListener('keydown', key, true); return () => document.removeEventListener('keydown', key, true);
-  }, [detail, moving, archives]);
+  }, [detail, moving, archives, deletion, busy]);
   function context(e: MouseEvent, target: Target) { e.preventDefault(); e.stopPropagation(); setMenu({ ...target, x: e.clientX, y: e.clientY }); }
   function keyboardContext(e: KeyboardEvent, target: Target) {
     if (e.key !== 'ContextMenu' && !(e.shiftKey && e.key === 'F10')) return;
@@ -58,6 +59,8 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
   }
   const detailThread = detail?.kind === 'thread' ? threads.find(t => t.id === detail.id) : undefined;
   const detailProject = data?.projects.find(p => p.id === (detail?.kind === 'project' ? detail.id : detailThread?.projectId));
+  const deletionProject = deletion?.kind === 'project' ? data?.projects.find(p => p.id === deletion.id) : undefined;
+  const deletionCount = deletion?.kind === 'project' ? threads.filter(t => t.projectId === deletion.id).length : 1;
   return <>
     <div className="projectlist"><div className="sectionlabel">工作空间<IconButton title="添加工作空间" onClick={onAdd} disabled={busy}><Plus /></IconButton></div>
       {projects.map(p => <div className={`projectgroup ${dropTarget === p.id ? 'droptarget' : ''}`} key={p.id} data-project-id={p.id}
@@ -106,10 +109,16 @@ export function WorkspaceSidebar({ data, activeId, busy, running, onOpen, onAdd,
     {moving && createPortal(<Modal title="迁移会话" subtitle="保留完整对话历史，后续任务使用目标项目目录。项目文件不会移动。" onClose={() => setMoving(undefined)}>
       <div className="workspacechoices">{projects.filter(p => p.id !== threads.find(t => t.id === moving)?.projectId).map(p => <button key={p.id} disabled={busy} onClick={() => void move(moving, p.id)}><Folder /><span><strong>{p.name}</strong><small>{p.path}</small></span><ArrowRightLeft /></button>)}</div>
     </Modal>, document.body)}
-    {archives && createPortal(<Modal title="已归档" subtitle="归档只收起项目和会话，保留本地文件与对话记录。" onClose={() => setArchives(false)}>
-      <div className="archivelist">{archivedProjects.map(p => <div key={p.id}><Folder /><span><strong>{p.name}</strong><small>项目 · {p.path}</small></span><button className="outlinebutton" disabled={busy} onClick={() => void onAction('project.restore', { id: p.id }, '项目已恢复')}><RotateCcw />恢复项目</button></div>)}
-      {archivedThreads.map(t => <div key={t.id}><Archive /><span><strong>{t.title}</strong><small>会话 · {data?.projects.find(p => p.id === t.projectId)?.name}</small></span><button className="outlinebutton" disabled={busy} onClick={() => void onAction('thread.restore', { id: t.id }, '会话已恢复，所属项目已显示')}><RotateCcw />恢复会话</button></div>)}
+    {archives && !deletion && createPortal(<Modal title="已归档" subtitle="恢复归档内容，或永久删除不再需要的记录。" onClose={() => setArchives(false)}>
+      <div className="archivelist">{archivedProjects.map(p => <div key={p.id} data-archived-project={p.id}><Folder /><span><strong>{p.name}</strong><small>项目 · {p.path}</small></span><div className="archiveactions"><button className="outlinebutton" disabled={busy} onClick={() => void onAction('project.restore', { id: p.id }, '项目已恢复')}><RotateCcw />恢复项目</button><button className="archive-delete" aria-label={`永久删除项目 ${p.name}`} disabled={busy} onClick={() => setDeletion({ kind: 'project', id: p.id })}><Trash2 />永久删除</button></div></div>)}
+      {archivedThreads.map(t => <div key={t.id} data-archived-thread={t.id}><Archive /><span><strong>{t.title}</strong><small>会话 · {data?.projects.find(p => p.id === t.projectId)?.name}</small></span><div className="archiveactions"><button className="outlinebutton" disabled={busy} onClick={() => void onAction('thread.restore', { id: t.id }, '会话已恢复，所属项目已显示')}><RotateCcw />恢复会话</button><button className="archive-delete" aria-label={`永久删除会话 ${t.title}`} disabled={busy} onClick={() => setDeletion({ kind: 'thread', id: t.id })}><Trash2 />永久删除</button></div></div>)}
       {!archivedProjects.length && !archivedThreads.length && <p className="emptypop">还没有归档内容。</p>}</div>
+    </Modal>, document.body)}
+    {deletion && createPortal(<Modal title={deletion.kind === 'project' ? '永久删除项目？' : '永久删除会话？'} subtitle="此操作无法撤销，删除后不能从归档中恢复。" onClose={() => { if (!busy) setDeletion(null); }}>
+      <div className="deletion-target"><Trash2 /><div><strong>{name(deletion)}</strong><small>{deletion.kind === 'project' ? `此项目及其当前所属的 ${deletionCount} 条会话` : '此会话的本地历史记录'}</small></div></div>
+      <div className="deletion-scope"><p>将删除会话记录及仅供这些会话使用的关联附件副本，原会话链接将失效。</p><p>{deletion.kind === 'project' ? '磁盘上的项目文件夹会保留，已迁移到其他项目的会话也会保留。' : '其他会话、原始附件和磁盘项目文件会保留。'}</p>{deletionProject && <code>{deletionProject.path}</code>}</div>
+      <div className="access-warning"><AlertTriangle /><p>删除的记录不会进入回收站。已导出或独立备份的内容不在此次删除范围内。</p></div>
+      <div className="modalactions deletion-actions"><button className="outlinebutton" disabled={busy} onClick={() => setDeletion(null)}>取消</button><button className="dangerbutton" disabled={busy} onClick={async () => { if (await onAction(`${deletion.kind}.delete`, { id: deletion.id, confirmed: true }, deletion.kind === 'project' ? '项目及其会话已永久删除，磁盘文件夹已保留' : '会话已永久删除')) setDeletion(null); }}>{busy ? <Loader2 className="spin" /> : <Trash2 />}{busy ? '正在删除…' : deletion.kind === 'project' ? '永久删除项目' : '永久删除会话'}</button></div>
     </Modal>, document.body)}
   </>;
 }

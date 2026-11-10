@@ -136,6 +136,10 @@ export class Sessions {
     try {
       const result = await this.rpc.request('prompt', { message, ...(images.length ? { images } : {}) }, 60_000);
       const thread = this.store.thread(); if (thread.title === '新建会话') { thread.title = text.replace(/\s+/g, ' ').slice(0, 38); this.store.save(); this.sendEvent({ kind: 'data' }); }
+      if (attachments.length) {
+        thread.attachmentPaths = [...new Set([...(thread.attachmentPaths || []), ...attachments.map(id => this.attachments.get(id)!.path)])];
+        this.store.save();
+      }
       if (result?.disposition === 'handled') { this.starting = false; await this.refresh(); }
       attachments.forEach(id => this.attachments.delete(id)); return result;
     } catch (e) { this.starting = false; this.snapshot.busy = !!this.rpc?.busy; this.sendEvent({ kind: 'snapshot', snapshot: this.snapshot }); throw e; }

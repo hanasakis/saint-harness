@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Store } from './store';
 import type { Sessions } from './session';
+import { permanentlyDelete } from './permanent-delete';
 
 export function threadLink(id: string) { return `saint-harness://threads/${encodeURIComponent(id)}`; }
 export function threadIdFromLink(input: string) {
@@ -12,7 +13,14 @@ export function threadIdFromLink(input: string) {
 }
 
 export class WorkspaceActions {
+  deleting = false;
   constructor(private store: Store, private sessions: Pick<Sessions, 'connect' | 'detach'>, private changed: () => void) {}
+  async delete(kind: 'project' | 'thread', id: string) {
+    if (this.deleting) throw new Error('请等待当前删除完成');
+    this.deleting = true;
+    try { await permanentlyDelete(this.store, kind, id); }
+    finally { this.deleting = false; this.changed(); }
+  }
   async archive(kind: 'project' | 'thread', id: string) {
     const item = kind === 'project' ? this.store.project(id) : this.store.thread(id);
     const active = this.store.data.threads.find(t => t.id === this.store.data.activeThreadId);

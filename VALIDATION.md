@@ -45,3 +45,14 @@
 截图：`artifacts/access-confirmation.png`、`thread-context-menu.png`、`project-context-menu.png`、`image-drop-composer.png`、`any-file-drop-composer.png`、`engine-missing.png`、`engine-installed.png`、`engine-local-guide.png`。记录：`desktop-test.json`、`engine-test.json`、`runtime-test.json`。
 
 附件预加载与交给模型的链路已验证，不代表所有文档格式均已有解析器；PDF/Office/压缩包等由当前 Agent 的可用工具处理。未使用商业 API，真实模型的文档理解质量仍需实际账号验收。旧版已从索引删除的归档记录不会自动找回，本轮开始的归档均可恢复。
+
+
+## 0.1.3 归档永久删除（2026-11-10）
+
+归档项目和会话均新增「永久删除」，确认框明确显示名称、项目所属会话数量和保留的磁盘目录。取消或 Esc 不删除。主进程要求明确确认且重新验证归档状态，不能直接删除未归档或正在使用的记录。
+
+17 项核心测试通过。新增测试覆盖会话历史及迁移副本清理、仅属于目标会话的关联附件清理、共享文件保留、项目级联删除、迁出会话保留、原始项目文件不变、路径越界与 Windows junction 拒绝、文件被占用时保留归档索引供重试。新发送的附件记录归属，已有文本/文件附件从会话元数据识别；无法确认归属的旧缓存保留，不把此功能描述成磁盘安全擦除。
+
+`npm run test:delete` 使用独立 `.test-data/` 验证确认、取消、Esc、确认前被恢复的项目拒绝删除、删除单条会话、删除项目及两条所属会话、重启后不恢复、旧会话链接失效和 660px 窗口布局。删除测试只操作一次性测试资料，没有删除用户的归档内容。截图与记录为 `artifacts/archive-delete-compact.png`、`archive-project-delete-confirm.png`、`delete-test.json`。
+
+源码版及最终打包 EXE 的删除界面测试均通过；真实 Pi 1.5.1 的完整桌面回归通过，含消息、工具审批、迁移、权限弹窗和任意文件附件。

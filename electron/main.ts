@@ -25,7 +25,7 @@ let pendingLink = process.argv.find(arg => arg.startsWith('saint-harness:'));
 let ready = false;
 let shuttingDown = false;
 const send = (event: DesktopEvent) => { if (window && !window.isDestroyed()) window.webContents.send('saint:event', event); };
-const requireIdle = () => { if (sessions.busy || runtime.info().updating) throw new Error('请等待当前任务或更新结束'); };
+const requireIdle = () => { if (sessions.busy || runtime.info().updating || workspace?.deleting) throw new Error('请等待当前任务、更新或删除结束'); };
 const currentProject = () => store.projectFor(store.thread());
 const idSchema = z.object({ id: z.string().min(1).max(200) });
 const pathSchema = z.object({ path: z.string().max(4000) });
@@ -69,19 +69,20 @@ async function handle(action: string, payload: unknown) {
       const result = await dialog.showMessageBox(window!, { type: 'warning', title: '信任项目配置', message: `允许加载 ${project.name} 的项目配置与扩展？`, detail: 'Pi 的项目扩展、MCP 和配置可以执行本机代码。仅对你信任的项目启用；这不会创建系统沙箱。', buttons: ['取消','信任此项目'], defaultId: 0, cancelId: 0 });
       if (result.response !== 1) return false; project.trusted = true; store.save(); await reconnect(); return true;
     }
-    case 'project.rename': { const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); store.project(id).name = title; store.save(); send({ kind: 'data' }); return true; }
+    case 'project.rename': { requireIdle(); const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); store.project(id).name = title; store.save(); send({ kind: 'data' }); return true; }
     case 'project.reveal': { const { id } = idSchema.parse(payload); const error = await shell.openPath(store.project(id).path); if (error) throw new Error(error); return true; }
     case 'project.copyPath': { const { id } = idSchema.parse(payload); clipboard.writeText(store.project(id).path); return true; }
     case 'project.archive': case 'thread.archive': { requireIdle(); const { id } = idSchema.parse(payload); await workspace.archive(action === 'project.archive' ? 'project' : 'thread', id); return true; }
+    case 'project.delete': case 'thread.delete': { requireIdle(); const { id } = idSchema.extend({ confirmed: z.literal(true) }).parse(payload); await workspace.delete(action === 'project.delete' ? 'project' : 'thread', id); return true; }
     case 'project.restore': case 'thread.restore': { requireIdle(); const { id } = idSchema.parse(payload); workspace.restore(action === 'project.restore' ? 'project' : 'thread', id); return true; }
     case 'thread.move': { requireIdle(); const { id, projectId } = idSchema.extend({ projectId: z.string() }).parse(payload); await workspace.move(id, projectId); return true; }
     case 'thread.copyLink': { const { id } = idSchema.parse(payload); store.thread(id); const link = threadLink(id); clipboard.writeText(link); return link; }
     case 'thread.openLink': { const { link } = z.object({ link: z.string().max(500) }).parse(payload); await openLink(link); return true; }
     case 'thread.new': { requireIdle(); const { projectId } = z.object({ projectId: z.string() }).parse(payload); const thread = store.addThread(projectId); send({ kind: 'data' }); await sessions.connect(thread.id); return thread; }
     case 'thread.open': { requireIdle(); const { id } = idSchema.parse(payload); return sessions.connect(id); }
-    case 'thread.rename': { const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); store.thread(id).title = title; store.save(); send({ kind: 'data' }); return true; }
+    case 'thread.rename': { requireIdle(); const { id, title } = idSchema.extend({ title: z.string().trim().min(1).max(100) }).parse(payload); store.thread(id).title = title; store.save(); send({ kind: 'data' }); return true; }
     case 'session.refresh': return sessions.refresh();
-    case 'session.send': { const p = z.object({ text: z.string().trim().min(1).max(200000), skills: z.array(z.string()).max(20).default([]), attachments: z.array(z.string()).max(10).default([]) }).parse(payload); return sessions.prompt(p.text, p.skills, p.attachments); }
+    case 'session.send': { requireIdle(); const p = z.object({ text: z.string().trim().min(1).max(200000), skills: z.array(z.string()).max(20).default([]), attachments: z.array(z.string()).max(10).default([]) }).parse(payload); return sessions.prompt(p.text, p.skills, p.attachments); }
     case 'session.stop': return sessions.stop();
     case 'session.model': { const p = z.object({ provider: z.string(), modelId: z.string() }).parse(payload); return sessions.setModel(p.provider, p.modelId); }
     case 'session.thinking': return sessions.setThinking(z.object({ level: z.string() }).parse(payload).level);
@@ -137,12 +138,12 @@ async function handle(action: string, payload: unknown) {
       requireIdle();
       const result = await dialog.showOpenDialog(window!, {title:'选择 Pi 保存位置',buttonLabel:'下载到这里并连接',properties:['openDirectory','createDirectory']});
       if (result.canceled || !result.filePaths[0]) return null;
-      requireIdle(); return runtime.install(result.filePaths[0],()=>sessions.busy,reconnect);
+      requireIdle(); return runtime.install(result.filePaths[0],()=>sessions.busy || workspace.deleting,reconnect);
     }
     case 'engine.connect': {
       requireIdle();
       const p = z.object({path:z.string().max(4000).optional()}).parse(payload || {});
-      return runtime.connectExisting(p.path || runtime.info().path,()=>sessions.busy,reconnect);
+      return runtime.connectExisting(p.path || runtime.info().path,()=>sessions.busy || workspace.deleting,reconnect);
     }
     case 'engine.chooseFolder':
     case 'engine.add': {
@@ -151,12 +152,12 @@ async function handle(action: string, payload: unknown) {
         ? {title:'选择已下载的 Pi 安装文件夹',buttonLabel:'连接此引擎',properties:['openDirectory']}
         : {title:'选择 Pi 入口文件',buttonLabel:'连接此引擎',properties:['openFile'],filters:[{name:'Pi 入口',extensions:['js','mjs','cjs','exe','cmd','ps1']}]});
       if (result.canceled || !result.filePaths[0]) return null;
-      requireIdle(); return runtime.connectExisting(result.filePaths[0],()=>sessions.busy,reconnect);
+      requireIdle(); return runtime.connectExisting(result.filePaths[0],()=>sessions.busy || workspace.deleting,reconnect);
     }
     case 'engine.check': return runtime.check();
-    case 'engine.update': return runtime.update(() => sessions.busy, reconnect);
-    case 'engine.rollback': return runtime.rollback(() => sessions.busy, reconnect);
-    case 'engine.builtin': { requireIdle(); return runtime.connectExisting(runtime.bundled,()=>sessions.busy,reconnect,runtime.bundled); }
+    case 'engine.update': return runtime.update(() => sessions.busy || workspace.deleting, reconnect);
+    case 'engine.rollback': return runtime.rollback(() => sessions.busy || workspace.deleting, reconnect);
+    case 'engine.builtin': { requireIdle(); return runtime.connectExisting(runtime.bundled,()=>sessions.busy || workspace.deleting,reconnect,runtime.bundled); }
     case 'external.open': { const { url } = z.object({ url: z.string().max(4000) }).parse(payload); await shell.openExternal(validWebUrl(url).href); return true; }
     default: throw new Error('未知操作');
   }
@@ -184,6 +185,7 @@ app.whenReady().then(async () => {
   ipcMain.on('saint:window', (event, action) => { if (event.sender !== window?.webContents) return; if (action === 'minimize') window.minimize(); if (action === 'maximize') window.isMaximized() ? window.unmaximize() : window.maximize(); if (action === 'close') window.close(); });
   window.on('close', event => {
     if (shuttingDown) return;
+    if (workspace.deleting) { event.preventDefault(); send({ kind: 'notice', message: '正在删除归档内容，完成后即可退出。' }); return; }
     if (sessions.busy || runtime.info().updating) { event.preventDefault(); void dialog.showMessageBox(window!, { type: 'question', message: '任务仍在运行，要停止并退出吗？', buttons: ['继续运行','停止并退出'], defaultId: 0, cancelId: 0 }).then(async result => { if (result.response !== 1) return; shuttingDown = true; runtime.shutdown(); await sessions.rpc?.close(); window?.close(); }); }
   });
   window.once('ready-to-show', () => window?.show());
@@ -191,7 +193,7 @@ app.whenReady().then(async () => {
   if (dev) { if (new URL(dev).origin !== 'http://127.0.0.1:5187') throw new Error('Invalid development URL'); await window.loadURL(dev); } else await window.loadFile(path.join(app.getAppPath(),'dist/index.html'));
   if (store.data.activeThreadId || store.data.runtimePath || store.data.externalCli) await sessions.reconnect().catch(() => {});
   ready = true; receiveLink(pendingLink); pendingLink = undefined;
-  const check = async () => { if (!store.data.settings.autoCheck || runtime.info().updating) return; try { await runtime.check(); if (store.data.settings.autoUpdate && runtime.info().updateAvailable && !sessions.busy) await runtime.update(() => sessions.busy, reconnect); } catch { /* Updates are optional; the current runtime stays usable offline. */ } };
+  const check = async () => { if (!store.data.settings.autoCheck || runtime.info().updating) return; try { await runtime.check(); if (store.data.settings.autoUpdate && runtime.info().updateAvailable && !sessions.busy) await runtime.update(() => sessions.busy || workspace.deleting, reconnect); } catch { /* Updates are optional; the current runtime stays usable offline. */ } };
   setTimeout(() => { void check(); }, 5000).unref(); setInterval(() => { void check(); }, 6 * 60 * 60 * 1000).unref();
 });
 app.on('before-quit', () => { runtime?.shutdown(); sessions?.clearAttachments(); sessions?.rpc?.kill(); });
