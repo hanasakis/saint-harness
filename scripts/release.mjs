@@ -74,8 +74,33 @@ async function publish() {
   gh('release', 'edit', tag, '--repo', repo, '--draft=false', `--prerelease=${version.includes('-')}`, ...(version.includes('-') ? [] : ['--latest']));
   console.log(`Published https://github.com/${repo}/releases/tag/${tag}`);
 }
+async function verify() {
+  // This request intentionally carries no GitHub token: verify the same route
+  // available to a person who has never signed in or cloned this repository.
+  const info = await fetch(`https://api.github.com/repos/${repo}/releases/tags/${tag}`, { signal: AbortSignal.timeout(30_000) });
+  if (!info.ok) throw Error(`Public Release lookup failed: HTTP ${info.status}`);
+  const published = await info.json();
+  if (published.draft || published.tag_name !== tag) throw Error('Release is not publicly available');
+  const results = [];
+  for (const name of [asset, path.basename(tarball)]) {
+    const item = published.assets.find(a => a.name === name && a.state === 'uploaded');
+    if (!item) throw Error(`Missing published download: ${name}`);
+    const response = await fetch(item.browser_download_url, { signal: AbortSignal.timeout(180_000) });
+    if (!response.ok) throw Error(`Public download failed: HTTP ${response.status}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length !== item.size || (name.endsWith('.zip') ? bytes.readUInt32LE(0) !== 0x04034b50 : bytes.readUInt16BE(0) !== 0x1f8b)) throw Error(`Incomplete archive download: ${name}`);
+    const built = name === asset ? archive : tarball;
+    if (process.env.GITHUB_ACTIONS && fs.existsSync(built) && !bytes.equals(fs.readFileSync(built))) throw Error(`Published download differs from the tested build: ${name}`);
+    results.push({ name, bytes: bytes.length, unauthenticatedDownload: true });
+  }
+  const pkg = JSON.parse(gh('api', `users/hanasakis/packages/npm/saint-harness`));
+  if (pkg.visibility !== 'public') throw Error('Set the first GitHub package to Public in Package settings, then rerun this workflow');
+  console.log(JSON.stringify({ version, downloads: results, packagePage: pkg.html_url, packageVisibility: pkg.visibility }, null, 2));
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Saint Harness ${version}\n\n[Release](https://github.com/${repo}/releases/tag/${tag}) · [Packages](${pkg.html_url})\n\nBoth archives downloaded successfully without authentication. Package visibility: public.\n`);
+}
 const action = process.argv[2];
 if (action === 'inspect') inspect();
 else if (action === 'prepare') prepare();
 else if (action === 'publish') await publish();
-else throw Error('Usage: node scripts/release.mjs inspect|prepare|publish');
+else if (action === 'verify') await verify();
+else throw Error('Usage: node scripts/release.mjs inspect|prepare|publish|verify');

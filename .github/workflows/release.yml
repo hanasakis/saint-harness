@@ -85,6 +85,8 @@ jobs:
         run: node scripts/release.mjs publish
         env:
           NODE_AUTH_TOKEN: ${{ github.token }}
+      - name: Verify public downloads and package visibility
+        run: node scripts/release.mjs verify
       - name: Keep test evidence
         if: always() && steps.version.outputs.publish == 'true'
         uses: actions/upload-artifact@v7
