@@ -1,6 +1,6 @@
 # Saint Harness
 
-基于 Pi 的个人 Agent 桌面工作空间，Windows x64 开发版 **0.1.5**。界面采用已确认的黑白设计与新版玻璃棱镜，保留侧栏字标、原生窗口、对话、输入区和右侧审阅面板。
+基于 Pi 的个人 Agent 桌面工作空间，Windows x64 开发版 **0.1.6**。界面采用已确认的黑白设计与新版玻璃棱镜，保留侧栏字标、原生窗口、对话、输入区和右侧审阅面板。
 
 仓库：<https://github.com/hanasakis/saint-harness>。首次拉取请阅读 [朋友拉取与启动指南](docs/GETTING_STARTED.zh-CN.md)。当前仓库公开，拉取不需要邀请或 GitHub 登录；提交修改需要仓库写权限，或通过 Fork / Pull Request 协作。
 
@@ -94,7 +94,7 @@ npm run test:delete
 npm run package
 ```
 
-`test:desktop` 启动真实 Electron 和 Pi，使用本机可控模型服务验证真实文件写入、拒绝审批、Git 审阅、停止、重启恢复、小窗口布局、应用内权限确认、项目/会话归档、真实拖动迁移和任意文件拖放，不调用收费 API。`test:runtime` 连接 npm 下载真实 Pi，验证更新和回退；仅将起始版本比较模拟为旧版本以触发更新。 `test:engine` 验证缺失引擎、原生目录选择、实际下载、现有目录/入口连接、取消和错误恢复。`test:thinking` 验证历史/流式思考的展开收起、空白字段和正文隔离。`test:concurrent` 验证真实 Pi 的并行流式任务、切换、草稿、后台审批、一次性模型命名、手动改名竞争和侧栏缓存统计。`test:delete` 验证删除确认、取消、项目级联删除、重启持久化、链接失效及小窗口布局。上述测试使用 `.test-data/`，不使用用户会话或真实凭据。
+`test:desktop` 启动真实 Electron 和 Pi，使用本机可控模型服务验证真实文件写入、拒绝审批、Git 审阅、停止、重启恢复、小窗口布局、应用内权限确认、项目/会话归档、真实拖动迁移和任意文件拖放，不调用收费 API。`test:runtime` 连接 npm 下载真实 Pi，验证更新和回退；仅将起始版本比较模拟为旧版本以触发更新。 `test:engine` 验证缺失引擎、原生目录选择、实际下载、现有目录/入口连接、取消和错误恢复。`test:context` 验证上下文小百分比及两处显示更新。`test:thinking` 验证历史/流式思考的展开收起、空白字段和正文隔离。`test:concurrent` 验证真实 Pi 的并行流式任务、切换、草稿、后台审批、一次性模型命名、手动改名竞争和侧栏缓存统计。`test:delete` 验证删除确认、取消、项目级联删除、重启持久化、链接失效及小窗口布局。上述测试使用 `.test-data/`，不使用用户会话或真实凭据。
 
 打包后的回归：`$env:SAINT_TEST_EXE=(Resolve-Path 'release/win-unpacked/Saint Harness.exe').Path; npm run test:desktop`。此变量仅供测试脚本使用。验收截图与机器可读记录在 `artifacts/`。
 

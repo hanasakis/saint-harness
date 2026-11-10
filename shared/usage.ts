@@ -6,3 +6,9 @@ export function cacheHitRate(stats?: SessionStats) {
   const totalInput = input + cacheRead + cacheWrite;
   return totalInput > 0 ? cacheRead / totalInput * 100 : undefined;
 }
+
+export function formatContextPercent(percent?: number | null) {
+  if (percent == null || !Number.isFinite(percent) || percent < 0) return '—';
+  if (percent > 0 && percent < 0.01) return '<0.01%';
+  return `${percent.toLocaleString('en-US', { maximumFractionDigits: 2, useGrouping: false })}%`;
+}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheHitRate } from '../shared/usage';
+import { cacheHitRate, formatContextPercent } from '../shared/usage';
 import { cleanTitle, titleConversation } from '../electron/session-title';
 
 test('cache ratio uses cumulative input only, including cache writes', () => {
@@ -20,4 +20,17 @@ test('title context includes both participants, excludes tools and appended atta
   const context=titleConversation([{role:'user',content:'分析项目\n\n<attachment>\nPRIVATE FILE CONTENT\n</attachment>'},{role:'toolResult',content:[{type:'text',text:'TOOL DATA'}]},{role:'assistant',content:[{type:'thinking',thinking:'PRIVATE REASONING'},{type:'text',text:'已经整理结构'}]}]);
   assert.ok(context.includes('user: 分析项目'));assert.ok(context.includes('assistant: 已经整理结构'));
   assert.ok(!context.includes('PRIVATE'));assert.ok(!context.includes('TOOL DATA'));
+});
+
+test('context display preserves small positive percentages and distinguishes zero from unknown', () => {
+  assert.equal(formatContextPercent(2327 / 1048576 * 100), '0.22%');
+  assert.equal(formatContextPercent(4900 / 1048576 * 100), '0.47%');
+  assert.equal(formatContextPercent(0.00001), '<0.01%');
+  assert.equal(formatContextPercent(0.01), '0.01%');
+  assert.equal(formatContextPercent(0), '0%');
+  assert.equal(formatContextPercent(12.345), '12.35%');
+  assert.equal(formatContextPercent(12), '12%');
+  assert.equal(formatContextPercent(100), '100%');
+  assert.equal(formatContextPercent(102.34), '102.34%');
+  for (const unavailable of [undefined, null, NaN, Infinity, -1]) assert.equal(formatContextPercent(unavailable), '—');
 });
