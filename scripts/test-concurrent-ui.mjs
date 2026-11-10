@@ -17,7 +17,7 @@ const server=http.createServer(async(req,res)=>{
 });
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
 const state=p=>p.evaluate(()=>window.saint.invoke('bootstrap'));
-async function waitState(p,fn){for(let n=0;n<450;n++){const s=await state(p);if(fn(s))return s;await p.waitForTimeout(100);}throw Error('state timeout');}
+async function waitState(p,fn){for(let n=0;n<450;n++){const s=await state(p);if(!s.navigating&&fn(s))return s;await p.waitForTimeout(100);}throw Error('state timeout');}
 async function waitFor(fn){for(let n=0;n<450;n++){if(fn())return;await new Promise(r=>setTimeout(r,100));}throw Error('response timeout');}
 const launch=async()=>{app=await _electron.launch({...(process.env.SAINT_TEST_EXE?{executablePath:process.env.SAINT_TEST_EXE,args:[]}:{args:[root]}),env:{...process.env,SAINT_DATA_DIR:data}});const p=await app.firstWindow();await p.waitForSelector('.welcome,.conversation');return p;};
 try{

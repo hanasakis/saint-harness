@@ -31,7 +31,7 @@ try {
   let page=await launch();
   await app.evaluate(({dialog},directory)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});},workspace);
   await page.getByRole('button',{name:'添加工作空间',exact:true}).click();
-  await waitState(page,d=>d.snapshot.connected&&!d.snapshot.busy);
+  await waitIdle(page);
   if(process.env.SAINT_TEST_RUNTIME){await page.evaluate(runtime=>window.saint.invoke('engine.connect',{path:runtime}),process.env.SAINT_TEST_RUNTIME);await waitIdle(page);}
   results.push('real Pi process connected to a workspace containing Chinese characters');
   await page.getByRole('button',{name:'我的工作空间',exact:true}).click();
