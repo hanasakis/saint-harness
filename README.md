@@ -1,6 +1,6 @@
 # Saint Harness
 
-基于 Pi 的个人 Agent 桌面工作空间，Windows x64 首版 **0.1.0**。界面采用已确认的黑白设计与新版玻璃棱镜，保留侧栏字标、原生窗口、对话、输入区和右侧审阅面板。
+基于 Pi 的个人 Agent 桌面工作空间，Windows x64 开发版 **0.1.1**。界面采用已确认的黑白设计与新版玻璃棱镜，保留侧栏字标、原生窗口、对话、输入区和右侧审阅面板。
 
 仓库：<https://github.com/hanasakis/saint-harness>。首次拉取请阅读 [朋友拉取与启动指南](docs/GETTING_STARTED.zh-CN.md)。当前仓库公开，拉取不需要邀请或 GitHub 登录；提交修改需要仓库写权限，或通过 Fork / Pull Request 协作。
 
@@ -24,6 +24,7 @@ npm.cmd run dev
 
 1. 点击「从项目开始」或工作空间旁的 `+`，选择本机项目目录。
 2. 点击左下角「我的工作空间」，配置 Anthropic、OpenAI、DeepSeek 或自定义 OpenAI Chat Completions 兼容服务。自定义服务填写实际 API 地址、模型 ID 和上下文长度；本地免密服务可不填 Key。
+   可先点击「测试连接」验证当前地址、凭据和模型列表；无需先保存或打开工作空间。API Key 留空时复用此服务商已保存的密钥。测试不会发送对话，成功不代表模型推理已验证；自定义服务须提供兼容的 `/models` 接口。
 3. 在输入框下方选择模型，输入任务并发送。按 Enter 发送，Shift+Enter 换行；Ctrl+N 新建会话，Ctrl+K 搜索。
 4. 在「项目文件」「待审阅」查看实际文件与 Git 改动。Git 审阅需要系统已安装 Git；普通目录仍可对话、操作文件及预览文本。
 
@@ -63,6 +64,7 @@ npm run dev
 npm run build
 npm test
 npm run test:desktop
+npm run test:connection
 npm run test:runtime
 npm run package
 ```

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { Store } from './store';
 import { RuntimeManager } from './runtime';
 import { Sessions } from './session';
+import { testProviderConnection } from './provider-test';
 import * as files from './files';
 import type { DesktopEvent, Attachment, Bootstrap, AccessMode } from '../shared/types';
 
@@ -22,7 +23,7 @@ const requireIdle = () => { if (sessions.busy || runtime.info().updating) throw 
 const currentProject = () => store.projectFor(store.thread());
 const idSchema = z.object({ id: z.string().min(1).max(200) });
 const pathSchema = z.object({ path: z.string().max(4000) });
-const providerSchema = z.object({ id: z.enum(['anthropic','openai','deepseek','custom']), name: z.string().max(100), apiKey: z.string().max(12000).optional(), baseUrl: z.string().max(2000).optional(), modelId: z.string().max(250).optional(), contextWindow: z.number().int().min(1024).max(4_000_000).optional(), reasoning: z.boolean().optional() });
+const providerSchema = z.object({ id: z.enum(['anthropic','openai','deepseek','custom']), name: z.string().max(100), apiKey: z.string().trim().max(12000).optional(), baseUrl: z.string().trim().max(2000).optional(), modelId: z.string().trim().max(250).optional(), contextWindow: z.number().int().min(1024).max(4_000_000).optional(), reasoning: z.boolean().optional() });
 
 async function bootstrap(): Promise<Bootstrap> { return { projects: store.data.projects, threads: store.data.threads, activeThreadId: store.data.activeThreadId, settings: store.publicSettings(), engine: runtime.info(), version: app.getVersion(), snapshot: sessions.snapshot }; }
 async function reconnect() { await sessions.reconnect(); send({ kind: 'data' }); }
@@ -80,6 +81,12 @@ async function handle(action: string, payload: unknown) {
       requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择技能的 SKILL.md 文件', properties: ['openFile'], filters: [{ name: 'Skill', extensions: ['md'] }] }); if (result.canceled) return false;
       const file = result.filePaths[0]; if (path.basename(file).toLowerCase() !== 'skill.md') throw new Error('请选择技能目录中的 SKILL.md'); if (fs.statSync(file).size > 128000) throw new Error('技能文件不能超过 128 KB');
       if (!store.data.skillPaths.includes(file)) store.data.skillPaths.push(file); store.save(); await reconnect(); return true;
+    }
+    case 'settings.testProvider': {
+      const p = providerSchema.parse(payload);
+      const encrypted = store.data.secrets[p.id];
+      const key = p.apiKey?.trim() || (encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '');
+      return testProviderConnection(p, key);
     }
     case 'settings.saveProvider': {
       requireIdle(); const p = providerSchema.parse(payload); if (p.baseUrl) validWebUrl(p.baseUrl);

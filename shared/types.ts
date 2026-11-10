@@ -2,6 +2,7 @@ export type AccessMode = 'ask' | 'auto' | 'full';
 export interface Project { id: string; name: string; path: string; trusted: boolean }
 export interface Thread { id: string; projectId: string; title: string; sessionFile?: string; createdAt: number; updatedAt: number }
 export interface ProviderConfig { id: 'anthropic' | 'openai' | 'deepseek' | 'custom'; name: string; baseUrl?: string; modelId?: string; contextWindow?: number; reasoning?: boolean; hasKey?: boolean }
+export interface ConnectionTestResult { ok: boolean; message: string; elapsedMs: number; modelCount?: number }
 export interface Settings { access: AccessMode; autoCheck: boolean; autoUpdate: boolean; providers: ProviderConfig[]; defaultModel?: { provider: string; id: string }; defaultThinking?: string }
 export interface Model { id: string; name: string; provider: string; contextWindow: number; reasoning: boolean; input?: string[] }
 export interface Skill { name: string; description?: string; source: string; sourceInfo?: { path: string; scope: string } }
