@@ -124,3 +124,13 @@
 - 打包验收直接连接现有 release/win-unpacked/resources/runtime 下的 Pi 1.5.1，升级仅替换桌面应用文件，不重复安装 Pi。独立 EXE 引擎缺少 SDK 时给出切换内置 Pi 的提示。
 
 本机原用户配置启动复验：0.1.8 成功连接原目录 Pi 1.5.1，旧会话中可打开含四项操作的选区菜单，创建侧边分支入口可用，渲染错误为 0。桌面文件已备份到 release/app-files-0.1.7-backup-20261110-185809，随后正常重启应用供用户体验。
+
+## 0.1.8 GitHub 正式分发流程（2026-11-10）
+
+新增 Release desktop and package 工作流：从版本与锁文件安装、25 项核心测试、完整 Windows ZIP 构建、打包版桌面 / 并发 / Side Chat / 剪贴板测试，随后发布 Release 与 @hanasakis/saint-harness npm 分发包。npm 包只包含同版 Windows ZIP、说明和第三方声明，根源码项目仍为 private:true。
+
+首轮云端发现并发测试只等待 connected 状态，未等待会话切换收尾，导致设置操作被原有忙碌保护拒绝。测试改为等待 navigating=false；应用安全检查保留。最终构建与全部交互测试通过：https://github.com/hanasakis/saint-harness/actions/runs/42821504500 。发布标签 v0.1.8 指向实际构建提交 cfc9acfa1337e12f688afb4f88c5e5a714a2b20a。
+
+Release 已公开，ZIP 为 212,678,826 bytes，TGZ 为 207,691,348 bytes；Packages 版本为 0.1.8 且 visibility=public。独立云端复验以无认证请求完整下载两个文件，验证大小及压缩格式，并核对公开包状态：https://github.com/hanasakis/saint-harness/actions/runs/42823422426 。后续同一发布作业还会对公开下载与本次构建逐字节比较，已公开版本保持不覆盖。
+
+本地独立构建的 ZIP 经完整解压校验通过，检查 19,536 项条目，包含 Pi CLI / SDK、权限扩展和第三方声明，未包含应用个人配置、会话、测试目录。原本正在运行的 Saint Harness 未受发布操作影响。
