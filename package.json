@@ -78,6 +78,10 @@
       {
         "from": "VALIDATION.md",
         "to": "验收记录.md"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
       }
     ],
     "protocols": [
@@ -111,5 +115,9 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hanasakis/saint-harness.git"
   }
 }

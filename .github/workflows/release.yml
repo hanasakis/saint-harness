@@ -1,0 +1,96 @@
+name: Release desktop and package
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+      - docs/releases/**
+      - .github/workflows/release.yml
+      - scripts/release.mjs
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: saint-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+      packages: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            runtime/package-lock.json
+      - name: Check version to publish
+        id: version
+        run: node scripts/release.mjs inspect
+      - name: Install desktop and Pi dependencies
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          npm.cmd ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd ci --prefix runtime --omit=dev
+      - name: Test and build
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          npm.cmd test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm.cmd run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npx.cmd electron-builder --win zip --publish never --config.directories.output=release/publish
+      - name: Test the packaged application with its bundled Pi
+        if: steps.version.outputs.publish == 'true'
+        run: |
+          $env:SAINT_TEST_EXE=(Resolve-Path 'release/publish/win-unpacked/Saint Harness.exe').Path
+          $env:SAINT_TEST_RUNTIME=(Resolve-Path 'release/publish/win-unpacked/resources/runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js').Path
+          foreach ($script in @('test:desktop','test:concurrent','test:sidechat','test:clipboard')) {
+            npm.cmd run $script
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Prepare GitHub Packages distribution
+        if: steps.version.outputs.publish == 'true'
+        run: node scripts/release.mjs prepare
+      - name: Configure GitHub Packages authentication
+        if: steps.version.outputs.publish == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://npm.pkg.github.com
+          scope: '@hanasakis'
+      - name: Publish package and Release
+        if: steps.version.outputs.publish == 'true'
+        run: node scripts/release.mjs publish
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+      - name: Keep test evidence
+        if: always() && steps.version.outputs.publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-validation-${{ steps.version.outputs.version }}
+          path: |
+            artifacts/*.json
+            artifacts/*.png
+          if-no-files-found: ignore
+          retention-days: 14

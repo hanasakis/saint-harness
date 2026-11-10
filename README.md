@@ -4,6 +4,12 @@
 
 仓库：<https://github.com/hanasakis/saint-harness>。首次拉取请阅读 [朋友拉取与启动指南](docs/GETTING_STARTED.zh-CN.md)。当前仓库公开，拉取不需要邀请或 GitHub 登录；提交修改需要仓库写权限，或通过 Fork / Pull Request 协作。
 
+## 直接下载体验
+
+打开 [最新 Release](https://github.com/hanasakis/saint-harness/releases/latest)，下载 **Saint-Harness-版本-x64.zip**，完整解压后双击 **Saint Harness.exe**。已包含 Node、Electron 和 Pi，无需安装开发环境。下载包不包含作者的项目、聊天记录或 API Key；首次运行请连接自己的模型。
+
+每次应用版本更新会自动构建、测试并发布 Release 与 [GitHub Packages](https://github.com/hanasakis/saint-harness/packages)。Packages 提供同版完整 Windows ZIP 的 npm 分发包，普通用户直接选择 Release 附件即可。[版本发布与下载说明](docs/RELEASING.zh-CN.md)
+
 ## 从 GitHub 拉取并运行
 
 准备 Windows 10/11 x64、Git 和 Node.js 24.x 或更高版本，在 PowerShell 中执行：

@@ -4,6 +4,12 @@
 
 这是公开的 Windows 桌面应用源码仓库。拉取不需要登录 GitHub，也不需要作者的模型密钥。每位使用者的项目、会话和 API Key 保存在自己的电脑上。
 
+## 直接运行成品
+
+如果只是体验，无需克隆仓库或安装 Node。到 [最新 Release](https://github.com/hanasakis/saint-harness/releases/latest) 下载 **Saint-Harness-版本-x64.zip**，完整解压后双击 **Saint Harness.exe**。Pi 和运行环境已包含；请保留全部解压文件。
+
+升级前关闭旧版并备份应用目录，项目与会话仍存放在 %APPDATA%/Saint Harness。下面的步骤面向要修改代码的朋友。GitHub Packages 的下载方式见 [分发说明](RELEASING.zh-CN.md)。
+
 ## 1. 准备环境
 
 - Windows 10/11 x64；当前版本只在 Windows 上完成桌面验证。
