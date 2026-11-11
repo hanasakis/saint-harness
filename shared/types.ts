@@ -2,7 +2,7 @@ export type AccessMode = 'ask' | 'auto' | 'full';
 export interface Project { id: string; name: string; path: string; trusted: boolean; archivedAt?: number }
 export interface Thread { id: string; projectId: string; title: string; titleSource?: 'fallback' | 'model' | 'manual'; titleStatus?: 'pending' | 'generating' | 'done' | 'failed'; sessionFile?: string; attachmentPaths?: string[]; origin?: SelectionQuote & { inheritedMessages: number; inheritedEntryIds: string[] }; createdAt: number; updatedAt: number; archivedAt?: number }
 export interface SelectionQuote { threadId: string; entryId?: string; text: string; title: string }
-export interface ProviderConfig { id: 'anthropic' | 'openai' | 'deepseek' | 'custom'; name: string; baseUrl?: string; modelId?: string; contextWindow?: number; reasoning?: boolean; supportsImages?: boolean; hasKey?: boolean }
+export interface ProviderConfig { id: 'anthropic' | 'openai' | 'deepseek' | 'custom' | `custom-${string}`; name: string; baseUrl?: string; modelId?: string; contextWindow?: number; reasoning?: boolean; supportsImages?: boolean; hasKey?: boolean }
 export interface ConnectionTestResult { ok: boolean; message: string; elapsedMs: number; modelCount?: number }
 export interface Settings { access: AccessMode; autoCheck: boolean; autoUpdate: boolean; providers: ProviderConfig[]; defaultModel?: { provider: string; id: string }; defaultThinking?: string }
 export interface Model { id: string; name: string; provider: string; contextWindow: number; reasoning: boolean; input?: string[] }

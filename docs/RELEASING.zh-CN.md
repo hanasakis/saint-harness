@@ -8,9 +8,9 @@
 
 ```powershell
 npm.cmd login --scope=@hanasakis --auth-type=legacy --registry=https://npm.pkg.github.com
-npm.cmd pack @hanasakis/saint-harness@0.1.8 --registry=https://npm.pkg.github.com
-tar -xf hanasakis-saint-harness-0.1.8.tgz
-Expand-Archive -LiteralPath package/Saint-Harness-0.1.8-x64.zip -DestinationPath Saint-Harness
+npm.cmd pack @hanasakis/saint-harness@0.1.9 --registry=https://npm.pkg.github.com
+tar -xf hanasakis-saint-harness-0.1.9.tgz
+Expand-Archive -LiteralPath package/Saint-Harness-0.1.9-x64.zip -DestinationPath Saint-Harness
 & './Saint-Harness/Saint Harness.exe'
 ```
 
@@ -18,9 +18,9 @@ npm 登录的密码使用具有 read:packages 权限的个人访问令牌，不�
 
 ## 维护者每次发布
 
-1. 更新 package.json 与 package-lock.json 中的应用版本，例如 npm.cmd version 0.1.9 --no-git-tag-version；Pi 版本仅在确实更新引擎时修改。
-2. 新增 docs/releases/v0.1.9.md，写明用户可见变化、下载方式和本版验证范围。
-3. 提交并推送 main。Release desktop and package 工作流自动执行安装、核心测试、构建、完整 ZIP 打包，再运行打包版桌面 / 并发 / Side Chat / 剪贴板测试。
+1. 更新 package.json 与 package-lock.json 中的应用版本，例如 npm.cmd version 0.1.10 --no-git-tag-version；Pi 版本仅在确实更新引擎时修改。
+2. 新增 docs/releases/v0.1.10.md，写明用户可见变化、下载方式和本版验证范围。
+3. 提交并推送 main。Release desktop and package 工作流自动执行安装、核心测试、构建、完整 ZIP 打包，再运行打包版桌面 / 并发 / Side Chat / 剪贴板 / 模型与技能交互测试。
 4. 测试通过后建立 Release 草稿，上传 ZIP 和 npm TGZ，发布并核对 GitHub Packages 版本，最后公开 Release。对应 Git 标签指向本次实际构建的提交。
 5. 流程会以未登录方式完整下载 ZIP 和 TGZ，核对大小、压缩格式及与本次构建的一致性，并检查 Packages 为 Public。确认 Actions 成功后再通知用户新版可用。若失败，修复后可手动运行同一个工作流；仍为草稿的上传可恢复，已公开版本不会覆盖，须发布新版本。
 

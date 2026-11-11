@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useImperativeHandle, useRef, useState, type RefObject, type KeyboardEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Scissors, ClipboardPaste, Undo2, Redo2, TextSelect } from 'lucide-react';
-import type { Attachment } from '../shared/types';
+import type { Attachment, Skill } from '../shared/types';
 
 type Props = {
+  availableSkills?: Skill[];
+  selectedSkills?: string[];
+  onSelectSkill?: (name: string) => void;
   controller?: RefObject<{ paste: () => void } | null>;
   label?: string;
   inputRef: RefObject<HTMLTextAreaElement | null>;
@@ -16,7 +19,30 @@ type Props = {
 type Selection = { start: number; end: number; direction: 'forward' | 'backward' | 'none' };
 type Position = Selection & { x: number; y: number };
 
-export function ComposerInput({ controller, label = '任务输入', inputRef, value, placeholder, threadId, onChange, onSend, onPaste, onAttachments, onError }: Props) {
+export function ComposerInput({ availableSkills = [], selectedSkills = [], onSelectSkill, controller, label = '任务输入', inputRef, value, placeholder, threadId, onChange, onSend, onPaste, onAttachments, onError }: Props) {
+  const [caret,setCaret] = useState(0), [slashHidden,setSlashHidden] = useState(false), [activeSkill,setActiveSkill] = useState(0);
+  const slashRef = useRef<HTMLDivElement>(null);
+  const match = value.slice(0,caret).match(/(?:^|\s)\/([^\s/]*)$/);
+  const query = match?.[1].toLowerCase() || '';
+  const candidates = availableSkills.filter(s=>`${s.name.replace(/^skill:/,'')} ${s.description || ''}`.toLowerCase().includes(query)).slice(0,30);
+  const slashOpen = !!match && !slashHidden && !!onSelectSkill;
+  const active = Math.min(activeSkill,Math.max(0,candidates.length-1));
+  function chooseSkill(skill: Skill) {
+    if(!match || !onSelectSkill)return;
+    if(!selectedSkills.includes(skill.name) && selectedSkills.length>=20){onError('一次最多选择 20 个技能');return;}
+    const start=caret-query.length-1;
+    onSelectSkill(skill.name);onChange(value.slice(0,start)+value.slice(caret));setSlashHidden(true);
+    requestAnimationFrame(()=>{inputRef.current?.focus();inputRef.current?.setSelectionRange(start,start);setCaret(start);});
+  }
+  useLayoutEffect(()=>{
+    if(!slashOpen || !slashRef.current || !inputRef.current)return;
+    const position=()=>{const popup=slashRef.current!,rect=inputRef.current!.getBoundingClientRect();popup.style.left=`${Math.max(8,Math.min(rect.left,innerWidth-popup.offsetWidth-8))}px`;popup.style.top=`${Math.max(38,rect.top-popup.offsetHeight-10)}px`;};
+    position();window.addEventListener('resize',position);window.addEventListener('scroll',position,true);
+    const outside=(e:PointerEvent)=>{if(!slashRef.current?.contains(e.target as Node)&&e.target!==inputRef.current)setSlashHidden(true);};
+    document.addEventListener('pointerdown',outside,true);
+    return()=>{window.removeEventListener('resize',position);window.removeEventListener('scroll',position,true);document.removeEventListener('pointerdown',outside,true);};
+  },[slashOpen,query,candidates.length]);
+  useEffect(()=>{ if(slashOpen)slashRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({block:'nearest'}); },[slashOpen,active,query]);
   const [menu, setMenu] = useState<Position>();
   const menuRef = useRef<HTMLDivElement>(null);
   const pasting = useRef(false);
@@ -51,6 +77,15 @@ export function ComposerInput({ controller, label = '任务输入', inputRef, va
   }
   function openMenu(x: number, y: number) { setMenu({ ...selection(), x, y }); }
   function key(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if(slashOpen && !e.nativeEvent.isComposing){
+      if(e.key==='Escape'){e.preventDefault();e.stopPropagation();setSlashHidden(true);return;}
+      if(candidates.length && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && ['ArrowDown','ArrowUp','Enter','Tab'].includes(e.key)){
+        e.preventDefault();e.stopPropagation();
+        if(e.key==='Enter'||e.key==='Tab')chooseSkill(candidates[active]);
+        else setActiveSkill((active+(e.key==='ArrowDown'?1:-1)+candidates.length)%candidates.length);
+        return;
+      }
+    }
     if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') || (e.shiftKey && e.key === 'Insert')) {
       e.preventDefault(); void paste(selection(), e.shiftKey && e.key !== 'Insert'); return;
     }
@@ -93,9 +128,10 @@ export function ComposerInput({ controller, label = '任务输入', inputRef, va
     { command: 'selectAll', label: '全选', icon: TextSelect, shortcut: 'Ctrl A', disabled: !value },
   ] as const;
   return <>
-    <textarea ref={inputRef} aria-label={label} placeholder={placeholder} value={value} onChange={e => onChange(e.target.value)} rows={2}
+    <textarea ref={inputRef} aria-label={label} placeholder={placeholder} value={value} onChange={e => {onChange(e.target.value);setCaret(e.target.selectionStart);setSlashHidden(false);setActiveSkill(0);}} onSelect={e=>setCaret(e.currentTarget.selectionStart)} rows={2}
       onKeyDown={key} onPaste={e => { e.preventDefault(); void paste(selection()); }}
       onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openMenu(e.clientX, e.clientY); }} />
+    {slashOpen && createPortal(<div className="slashpicker glass" ref={slashRef} role="listbox" aria-label="选择技能"><div className="popheading">添加技能<small>↑ ↓ 选择 · Enter 添加 · Esc 关闭</small></div><div className="slashresults">{candidates.map((skill,i)=><button key={skill.name} role="option" aria-selected={i===active} className={i===active?'selected':''} onPointerDown={e=>e.preventDefault()} onClick={()=>chooseSkill(skill)}><strong>{skill.name.replace(/^skill:/,'')}</strong><small>{skill.description}</small>{selectedSkills.includes(skill.name)&&<span>已添加</span>}</button>)}{!candidates.length&&<p className="emptypop">没有匹配的技能，可从「技能库」添加。<br/>按 Esc 关闭，其他 / 命令仍可正常发送。</p>}</div></div>,document.body)}
     {menu && createPortal(<div className="contextmenu glass composermenu" role="menu" aria-label="输入编辑菜单" ref={menuRef} style={{ left: menu.x, top: menu.y }} onContextMenu={e => e.preventDefault()} onKeyDown={e => {
       if (!['ArrowDown','ArrowUp','Home','End'].includes(e.key)) return;
       e.preventDefault(); const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));

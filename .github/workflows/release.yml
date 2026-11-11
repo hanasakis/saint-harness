@@ -66,7 +66,7 @@ jobs:
         run: |
           $env:SAINT_TEST_EXE=(Resolve-Path 'release/publish/win-unpacked/Saint Harness.exe').Path
           $env:SAINT_TEST_RUNTIME=(Resolve-Path 'release/publish/win-unpacked/resources/runtime/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js').Path
-          foreach ($script in @('test:desktop','test:concurrent','test:sidechat','test:clipboard')) {
+          foreach ($script in @('test:desktop','test:concurrent','test:sidechat','test:clipboard','test:interaction')) {
             npm.cmd run $script
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }

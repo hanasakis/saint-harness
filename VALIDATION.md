@@ -134,3 +134,15 @@
 Release 已公开，ZIP 为 212,678,826 bytes，TGZ 为 207,691,348 bytes；Packages 版本为 0.1.8 且 visibility=public。独立云端复验以无认证请求完整下载两个文件，验证大小及压缩格式，并核对公开包状态：https://github.com/hanasakis/saint-harness/actions/runs/42823422426 。后续同一发布作业还会对公开下载与本次构建逐字节比较，已公开版本保持不覆盖。
 
 本地独立构建的 ZIP 经完整解压校验通过，检查 19,536 项条目，包含 Pi CLI / SDK、权限扩展和第三方声明，未包含应用个人配置、会话、测试目录。原本正在运行的 Saint Harness 未受发布操作影响。
+
+
+## 0.1.9 模型与技能交互（2026-11-11）
+
+- 已复现旧版本的外部点击问题：打开模型菜单后点击输入框，菜单仍保留。修复后实际点击、菜单内部搜索及 Side Chat 外部点击均通过。
+- 25 项核心测试、TypeScript 与桌面构建通过。原有连接测试、16 项桌面场景、4 组并行会话场景、5 组 Side Chat 场景、10 项剪贴板场景通过。
+- 新增 `npm run test:interaction`：真实 Electron + Pi + 本地 HTTP/SSE 服务验证两个手动模型同时可选、独立加密密钥和测试连接、编辑/删除不影响另一模型及默认选择、切换后实际发送使用对应密钥、退出重启保留模型和技能。
+- `我的规范.md` 经真实 Pi 加载，未包含 description 的文件导入失败后恢复原技能列表。主对话和 Side Chat 的 `/` 搜索、Enter / Tab 添加、Esc / 点击外部关闭、保留草稿、空结果提示和技能正文发送均通过；选择技能本身不触发模型请求。
+- 截图：`artifacts/interaction-models.png`、`interaction-slash.png`、`interaction-side-skill.png`；结果：`interaction-test.json`。模型设置与技能列表沿用原主题。
+- 发布工作流新增打包版交互测试，沿用下载 ZIP 与 npm TGZ 实际核验流程。商业模型的真实账号鉴权、网关兼容性与推理质量未用于本轮验收。
+
+打包 EXE 的新增交互测试也已通过，使用本机现有内置 Pi 1.5.1；此次本机更新只替换应用文件，没有新增 Pi 安装。

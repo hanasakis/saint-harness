@@ -1,6 +1,6 @@
 # Saint Harness
 
-基于 Pi 的个人 Agent 桌面工作空间，Windows x64 开发版 **0.1.8**。界面采用已确认的黑白设计与新版玻璃棱镜，保留侧栏字标、原生窗口、对话、输入区和右侧审阅面板。
+基于 Pi 的个人 Agent 桌面工作空间，Windows x64 开发版 **0.1.9**。界面采用已确认的黑白设计与新版玻璃棱镜，保留侧栏字标、原生窗口、对话、输入区和右侧审阅面板。
 
 仓库：<https://github.com/hanasakis/saint-harness>。首次拉取请阅读 [朋友拉取与启动指南](docs/GETTING_STARTED.zh-CN.md)。当前仓库公开，拉取不需要邀请或 GitHub 登录；提交修改需要仓库写权限，或通过 Fork / Pull Request 协作。
 
@@ -145,3 +145,12 @@ npm run package
 Pi 官方参考：[RPC](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc.md)、[RPC 命令](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/rpc-commands.md)、[安全模型](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md)。以当前安装包内 `docs/` 为具体适配依据。
 
 字体、品牌素材和第三方依赖说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。项目尚未选择通用开源许可证，当前 `package.json` 标记为 `UNLICENSED`。
+
+## 模型与技能快捷操作（0.1.9）
+
+- 在模型选择器点击「管理连接」，再点「添加模型」。填写显示名称、API 地址、模型 ID 和密钥，即可手动添加多个 OpenAI 兼容模型；每个条目独立保存、测试、编辑与移除，原有服务商连接仍可使用。
+- 已保存模型显示在「我的模型」列表。编辑时 API Key 留空会保留该条目的密钥，不会借用其他模型的密钥。保存后在对话输入区选择要使用的模型。
+- 点击浮层外的输入框、聊天或侧栏可直接收起模型、思考强度、技能、权限等菜单；Esc 同样可收起。
+- 技能库可选择任意文件名的 `.md`，不再要求叫 `SKILL.md`。仍遵循 Pi 技能格式：文件开头 YAML 包含非空 `description`，建议同时提供唯一 `name`；文件上限 128 KB。原路径保留，技能中的相对路径仍按原目录解析。解析失败会显示原因并撤销此次导入。
+- 在主对话或 Side Chat 输入 `/` 或 `/关键词`，按名称或描述搜索技能。方向键选择，Enter / Tab 添加，Esc 取消，也可以鼠标点击。选中的技能显示为可移除标签，选择时不会发送消息，发送任务时才附带技能内容；已有草稿保留。
+- 个人信息入口与设置齿轮的拆分按本轮意见留待后续设计，见 [后续界面优化](docs/PRODUCT_BACKLOG.md)。

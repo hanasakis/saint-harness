@@ -1,3 +1,4 @@
+import { isCustomProvider, piProviderId } from '../shared/providers';
 import { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, clipboard } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,7 +13,7 @@ import { WorkspaceActions, threadLink, threadIdFromLink } from './workspace-acti
 import { prepareAttachments, discardAttachment, type AttachmentSource } from './attachments';
 import { readComposerClipboard } from './composer-clipboard';
 import * as files from './files';
-import type { DesktopEvent, Bootstrap, AccessMode } from '../shared/types';
+import type { DesktopEvent, Bootstrap, AccessMode, ProviderConfig } from '../shared/types';
 
 app.setName('Saint Harness');
 if (process.env.SAINT_DATA_DIR) app.setPath('userData', path.resolve(process.env.SAINT_DATA_DIR));
@@ -33,7 +34,7 @@ const requireCurrentIdle = () => { requireNavigation(); if (sessions.currentBusy
 const currentProject = () => store.projectFor(store.thread());
 const idSchema = z.object({ id: z.string().min(1).max(200) });
 const pathSchema = z.object({ path: z.string().max(4000) });
-const providerSchema = z.object({ id: z.enum(['anthropic','openai','deepseek','custom']), name: z.string().max(100), apiKey: z.string().trim().max(12000).optional(), baseUrl: z.string().trim().max(2000).optional(), modelId: z.string().trim().max(250).optional(), contextWindow: z.number().int().min(1024).max(4_000_000).optional(), reasoning: z.boolean().optional(), supportsImages: z.boolean().optional() });
+const providerSchema = z.object({ id: z.union([z.enum(['anthropic','openai','deepseek','custom']),z.string().regex(/^custom-[0-9a-f-]{36}$/).transform(id=>id as `custom-${string}`)]), name: z.string().max(100), apiKey: z.string().trim().max(12000).optional(), baseUrl: z.string().trim().max(2000).optional(), modelId: z.string().trim().max(250).optional(), contextWindow: z.number().int().min(1024).max(4_000_000).optional(), reasoning: z.boolean().optional(), supportsImages: z.boolean().optional() });
 
 async function bootstrap(): Promise<Bootstrap> { return { activities: sessions.activities, navigating: sessions.navigating, projects: store.data.projects, threads: store.data.threads, activeThreadId: store.data.activeThreadId, settings: store.publicSettings(), engine: runtime.info(), version: app.getVersion(), snapshot: sessions.snapshot, side: sessions.sideSnapshot }; }
 async function reconnect() { await sessions.reconnect(); send({ kind: 'data' }); }
@@ -107,9 +108,9 @@ async function handle(action: string, payload: unknown) {
     case 'side.open': { requireNavigation(); return sessions.openSide(idSchema.parse(payload).id); }
     case 'side.close': { requireNavigation(); await sessions.closeSide(); return true; }
     case 'side.send': {
-      requireNavigation(); const p = z.object({ threadId: z.string(), text: z.string().trim().min(1).max(200000), attachments: z.array(z.string()).max(10).default([]) }).parse(payload);
+      requireNavigation(); const p = z.object({ threadId: z.string(), text: z.string().trim().min(1).max(200000), attachments: z.array(z.string()).max(10).default([]), skills: z.array(z.string()).max(20).default([]) }).parse(payload);
       const channel = sessions.visibleChannel(p.threadId); if (addingAttachments.has(channel)) throw new Error('请等待附件添加完成');
-      return channel.prompt(p.text, [], p.attachments);
+      return channel.prompt(p.text, p.skills, p.attachments);
     }
     case 'side.stop': { const { id } = idSchema.parse(payload); return sessions.visibleChannel(id).stop(); }
     case 'side.model': { requireNavigation(); const p = z.object({ threadId: z.string(), provider: z.string(), modelId: z.string() }).parse(payload); return sessions.visibleChannel(p.threadId).setModel(p.provider, p.modelId); }
@@ -168,9 +169,14 @@ async function handle(action: string, payload: unknown) {
     }
     case 'attachments.remove': { const { id, threadId } = idSchema.extend({ threadId: z.string().optional() }).parse(payload); sessions.visibleChannel(threadId).removeAttachment(id); return true; }
     case 'skills.add': {
-      requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择技能的 SKILL.md 文件', properties: ['openFile'], filters: [{ name: 'Skill', extensions: ['md'] }] }); if (result.canceled) return false;
-      const file = result.filePaths[0]; if (path.basename(file).toLowerCase() !== 'skill.md') throw new Error('请选择技能目录中的 SKILL.md'); if (fs.statSync(file).size > 128000) throw new Error('技能文件不能超过 128 KB');
-      if (!store.data.skillPaths.includes(file)) store.data.skillPaths.push(file); store.save(); await reconnect(); return true;
+      requireIdle(); const result = await dialog.showOpenDialog(window!, { title: '选择 Markdown 技能文件（名称不限）', properties: ['openFile'], filters: [{ name: 'Skill', extensions: ['md'] }] }); if (result.canceled) return false;
+      requireIdle(); const file = fs.realpathSync(result.filePaths[0]); if (!fs.statSync(file).isFile() || path.extname(file).toLowerCase() !== '.md') throw new Error('请选择 Markdown 技能文件（.md），名称不限'); if (fs.statSync(file).size > 128000) throw new Error('技能文件不能超过 128 KB');
+      const previous = [...store.data.skillPaths];
+      try {
+        if (!store.data.skillPaths.includes(file)) store.data.skillPaths.push(file); store.save(); await reconnect();
+        if (!sessions.snapshot.commands.some(c=>c.source === 'skill' && c.sourceInfo?.path && path.resolve(c.sourceInfo.path).toLowerCase() === file.toLowerCase())) throw new Error('Pi 未识别此技能：请在 Markdown 开头的 YAML 中填写 description，建议填写唯一 name，避免与已有技能重名');
+        return true;
+      } catch (error) { store.data.skillPaths=previous; store.save(); await reconnect().catch(()=>{}); throw error; }
     }
     case 'settings.testProvider': {
       const p = providerSchema.parse(payload);
@@ -180,11 +186,11 @@ async function handle(action: string, payload: unknown) {
     }
     case 'settings.saveProvider': {
       requireIdle(); const p = providerSchema.parse(payload); if (p.baseUrl) validWebUrl(p.baseUrl);
-      if (p.id === 'custom' && (!p.baseUrl || !p.modelId)) throw new Error('请填写 API 地址和模型 ID');
+      if (isCustomProvider(p) && (!p.baseUrl || !p.modelId)) throw new Error('请填写 API 地址和模型 ID');
       if (p.apiKey) { if (!safeStorage.isEncryptionAvailable()) throw new Error('系统凭据加密不可用，未保存密钥'); store.data.secrets[p.id] = safeStorage.encryptString(p.apiKey).toString('base64'); }
       const { apiKey: _, ...config } = p; store.data.settings.providers = [...store.data.settings.providers.filter(x => x.id !== p.id), config]; store.save(); await reconnect(); send({ kind: 'data' }); return store.publicSettings();
     }
-    case 'settings.removeProvider': { requireIdle(); const { id } = idSchema.parse(payload); store.data.settings.providers = store.data.settings.providers.filter(p => p.id !== id); delete store.data.secrets[id]; store.data.settings.defaultModel = undefined; store.save(); await reconnect(); return store.publicSettings(); }
+    case 'settings.removeProvider': { requireIdle(); const { id } = idSchema.parse(payload); store.data.settings.providers = store.data.settings.providers.filter(p => p.id !== id); delete store.data.secrets[id]; if (store.data.settings.defaultModel?.provider === piProviderId({id:id as ProviderConfig['id']})) store.data.settings.defaultModel = undefined; store.save(); await reconnect(); return store.publicSettings(); }
     case 'settings.save': { const p = z.object({ autoCheck: z.boolean().optional(), autoUpdate: z.boolean().optional() }).parse(payload); Object.assign(store.data.settings, p); if (p.autoUpdate) store.data.settings.autoCheck = true; store.save(); send({ kind: 'data' }); return store.publicSettings(); }
     case 'engine.detect': return runtime.detect();
     case 'engine.install': {

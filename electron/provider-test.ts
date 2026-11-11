@@ -1,3 +1,4 @@
+import { isCustomProvider } from '../shared/providers';
 import type { ProviderConfig, ConnectionTestResult } from '../shared/types';
 
 const defaults = {
@@ -10,14 +11,14 @@ const defaults = {
 export async function testProviderConnection(provider: ProviderConfig, apiKey: string, timeoutMs = 15_000): Promise<ConnectionTestResult> {
   const started = performance.now();
   const result = (ok: boolean, message: string, modelCount?: number): ConnectionTestResult => ({ ok, message, elapsedMs: Math.round(performance.now() - started), ...(modelCount === undefined ? {} : { modelCount }) });
-  const base = provider.baseUrl?.trim() || defaults[provider.id];
+  const base = provider.baseUrl?.trim() || (isCustomProvider(provider) ? '' : defaults[provider.id as keyof typeof defaults]);
   let url: URL;
   try {
     url = new URL(base);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
   } catch { return result(false, '请填写有效的 HTTP 或 HTTPS API 地址，不包含账号、查询参数或片段。'); }
-  if (!apiKey && provider.id !== 'custom') return result(false, '请填写 API Key，或先保存此服务商的密钥。');
-  if (provider.id === 'custom' && !provider.modelId?.trim()) return result(false, '请填写模型 ID 后再测试。');
+  if (!apiKey && !isCustomProvider(provider)) return result(false, '请填写 API Key，或先保存此服务商的密钥。');
+  if (isCustomProvider(provider) && !provider.modelId?.trim()) return result(false, '请填写模型 ID 后再测试。');
   // Use the same base-URL conventions as Pi's Anthropic/OpenAI SDK clients.
   url.pathname = url.pathname.replace(/\/+$/, '') + (provider.id === 'anthropic' ? '/v1/models' : '/models');
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -57,8 +58,8 @@ export async function testProviderConnection(provider: ProviderConfig, apiKey: s
     catch { return result(false, '服务未返回有效的 JSON 模型列表，请检查是否填写了 API 地址。'); }
     if (!body || !Array.isArray(body.data) || body.data.some(m => !m || typeof m.id !== 'string')) return result(false, '响应不包含有效的模型列表，请检查服务的 API 兼容性。');
     if (!body.data.length) return result(false, '接口已连通，但没有返回可用模型，请检查账号权限或服务配置。', 0);
-    if (provider.id === 'custom' && !body.data.some(m => m.id === provider.modelId?.trim())) return result(false, '接口已连通，但列表中未找到填写的模型 ID，请核对后重试。', body.data.length);
-    return result(true, provider.id === 'custom' ? '连接成功，已找到指定模型。' : '连接成功，已读取模型列表。', body.data.length);
+    if (isCustomProvider(provider) && !body.data.some(m => m.id === provider.modelId?.trim())) return result(false, '接口已连通，但列表中未找到填写的模型 ID，请核对后重试。', body.data.length);
+    return result(true, isCustomProvider(provider) ? '连接成功，已找到指定模型。' : '连接成功，已读取模型列表。', body.data.length);
   } catch (error) {
     if (signal.aborted) return result(false, '连接超时，请检查网络、代理或服务地址后重试。');
     const code = (error as { cause?: { code?: string } }).cause?.code;

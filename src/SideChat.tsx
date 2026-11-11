@@ -1,3 +1,4 @@
+import { usePopoverDismiss } from './usePopoverDismiss';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUp, ArrowUpRight, ChevronDown, CornerUpLeft, GitBranch, Loader2, MessageSquarePlus, Paperclip, ShieldCheck, Square, X, Brain } from 'lucide-react';
 import type { Attachment, Bootstrap, PiEvent, SelectionQuote, Snapshot } from '../shared/types';
@@ -15,11 +16,13 @@ export function SideChat({ data, initial, onClose, onOpen, onBranch, onSource }:
   const [draft, setDraft] = useState(() => readSideDraft(id)?.text || '');
   const [quotes, setQuotes] = useState<SelectionQuote[]>(() => readSideDraft(id)?.quotes ?? (thread.origin && !partitionBranchMessages(initial.messages, thread.origin.inheritedEntryIds).own.length ? [thread.origin] : []));
   const [attachments, setAttachments] = useState<Attachment[]>(initial.attachments || []);
+  const [skills,setSkills] = useState<string[]>(()=>readSideDraft(id)?.skills || []);
   const [response, setResponse] = useState(''), [picker, setPicker] = useState<'model' | 'thinking'>();
+  usePopoverDismiss(picker, '.sidechat .sidepicker', ()=>setPicker(undefined));
   const input = useRef<HTMLTextAreaElement>(null), controller = useRef<{ paste: () => void }>(null), feed = useRef<HTMLDivElement>(null), follow = useRef(true);
   const busy = snap.busy || !!working, request = snap.requests?.[0];
   const messages = partitionBranchMessages(snap.messages, thread.origin?.inheritedEntryIds || []);
-  useEffect(() => { localStorage.setItem('saint-side-draft:' + id, JSON.stringify({ text: draft, quotes })); }, [draft, quotes, id]);
+  useEffect(() => { localStorage.setItem('saint-side-draft:' + id, JSON.stringify({ text: draft, quotes, skills })); }, [draft, quotes, skills, id]);
   useEffect(() => {
     input.current?.focus();
     return window.saint.onEvent(event => {
@@ -39,11 +42,11 @@ export function SideChat({ data, initial, onClose, onOpen, onBranch, onSource }:
   }
   async function send() {
     if (busy || (!draft.trim() && !quotes.length && !attachments.length)) return;
-    const original = draft, reference = quotes; follow.current = true;
+    const original = draft, reference = quotes, chosenSkills = skills; follow.current = true;
     await run('发送任务', async () => {
-      setDraft(''); setQuotes([]);
-      try { await window.saint.invoke('side.send', { threadId: id, text: quotedPrompt(original, reference) || '请查看这些附件。', attachments: attachments.map(a => a.id) }); setAttachments([]); }
-      catch (e) { setDraft(original); setQuotes(reference); throw e; }
+      setDraft(''); setQuotes([]); setSkills([]);
+      try { await window.saint.invoke('side.send', { threadId: id, text: quotedPrompt(original, reference) || '请查看这些附件。', attachments: attachments.map(a => a.id), skills: chosenSkills }); setAttachments([]); }
+      catch (e) { setDraft(original); setQuotes(reference); setSkills(chosenSkills); throw e; }
     });
   }
   const quote = (value: SelectionQuote) => { if (quotes.length >= 8) { setError('一次最多引用 8 段文字'); return; } setQuotes(q => [...q, value]); input.current?.focus(); };
@@ -63,9 +66,9 @@ export function SideChat({ data, initial, onClose, onOpen, onBranch, onSource }:
     {!snap.connected && !busy && <button className="textbutton side-reconnect" onClick={() => void run('重新连接', () => window.saint.invoke('side.open', { id }))}>重新连接侧边对话</button>}
     <div className="sidecomposerwrap" onDragOver={e => { if (e.dataTransfer.types.includes('Files')) { e.preventDefault(); e.dataTransfer.dropEffect = busy ? 'none' : 'copy'; } }} onDrop={e => { if (!e.dataTransfer.types.includes('Files')) return; e.preventDefault(); if (!busy) void run('添加附件', async () => { const added = await window.saint.addDroppedFiles(Array.from(e.dataTransfer.files), id); setAttachments(a => [...a, ...added]); }); }}>
       <div className={`composer ${snap.busy ? 'running' : ''}`}>
-        <QuoteSelection quotes={quotes} onChange={setQuotes}/>
+        <div className="chips">{skills.map(name=><button key={name} onClick={()=>setSkills(s=>s.filter(n=>n!==name))}>{name.replace(/^skill:/,'')}<X/></button>)}</div><QuoteSelection quotes={quotes} onChange={setQuotes}/>
         {!!attachments.length && <div className="chips">{attachments.map(a => <button className={`filechip ${a.preview ? 'imagechip' : ''}`} key={a.id} aria-label={`移除侧边附件 ${a.name}`} disabled={!!working} onClick={() => void run('移除附件', async () => { await window.saint.invoke('attachments.remove', { threadId: id, id: a.id }); setAttachments(v => v.filter(item => item.id !== a.id)); })}>{a.preview ? <img src={a.preview} alt={a.name}/> : <Paperclip/>}<span>{a.name}</span><X/></button>)}</div>}
-        <ComposerInput label="侧边对话输入" inputRef={input} controller={controller} value={draft} onChange={setDraft} placeholder="围绕选中文字，继续提问…" threadId={id} onSend={() => void send()} onPaste={operation => run('粘贴内容', operation)} onAttachments={added => setAttachments(a => [...a, ...added])} onError={setError}/>
+        <ComposerInput availableSkills={snap.commands.filter(c=>c.source==='skill')} selectedSkills={skills} onSelectSkill={name=>setSkills(s=>s.includes(name)?s:[...s,name])} label="侧边对话输入" inputRef={input} controller={controller} value={draft} onChange={setDraft} placeholder="围绕选中文字，继续提问…" threadId={id} onSend={() => void send()} onPaste={operation => run('粘贴内容', operation)} onAttachments={added => setAttachments(a => [...a, ...added])} onError={setError}/>
         <div className="composertools">
           <IconButton title="添加侧边附件" disabled={busy} onClick={() => void run('添加附件', async () => { const added = await window.saint.invoke<Attachment[]>('attachments.pick', { threadId: id }); setAttachments(a => [...a, ...added]); })}><Paperclip/></IconButton>
           <div className="anchor"><button className="tool" disabled={busy} onClick={() => setPicker(p => p === 'model' ? undefined : 'model')}>{snap.model?.name || '选择模型'}<ChevronDown/></button>{picker === 'model' && <div className="popover glass sidepicker">{snap.models.map(m => <button key={m.provider + m.id} onClick={() => void run('切换模型', async () => { await window.saint.invoke('side.model', { threadId: id, provider: m.provider, modelId: m.id }); setPicker(undefined); })}>{m.name}</button>)}</div>}</div>
@@ -77,7 +80,7 @@ export function SideChat({ data, initial, onClose, onOpen, onBranch, onSource }:
     </div>
   </aside>;
 }
-export function readSideDraft(id: string): { text: string; quotes: SelectionQuote[] } | undefined {
+export function readSideDraft(id: string): { text: string; quotes: SelectionQuote[]; skills?: string[] } | undefined {
   try { const value = JSON.parse(localStorage.getItem('saint-side-draft:' + id) || 'null'); if (value && typeof value.text === 'string' && Array.isArray(value.quotes)) return value; } catch {}
 }
 function sideEvent(s: Snapshot, r: PiEvent): Snapshot {

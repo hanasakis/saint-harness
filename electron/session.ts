@@ -1,3 +1,4 @@
+import { isCustomProvider, piProviderId, customKeyName } from '../shared/providers';
 import fs from 'node:fs';
 import path from 'node:path';
 import { safeStorage } from 'electron';
@@ -28,9 +29,10 @@ export class SessionChannel {
     const providers: Record<string, unknown> = {};
     for (const provider of this.store.data.settings.providers) {
       const encrypted = this.store.data.secrets[provider.id];
-      if (encrypted) env[names[provider.id]] = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
-      if (provider.id === 'custom') {
-        providers['saint-custom'] = { baseUrl: provider.baseUrl, api: 'openai-completions', apiKey: encrypted ? '$SAINT_CUSTOM_API_KEY' : 'local', models: [{ id: provider.modelId, name: provider.name || provider.modelId, contextWindow: provider.contextWindow || 128000, maxTokens: 8192, reasoning: !!provider.reasoning, input: provider.supportsImages ? ['text','image'] : ['text'] }] };
+      const keyName = isCustomProvider(provider) ? customKeyName(provider) : names[provider.id];
+      if (encrypted) env[keyName] = safeStorage.decryptString(Buffer.from(encrypted, 'base64'));
+      if (isCustomProvider(provider)) {
+        providers[piProviderId(provider)] = { baseUrl: provider.baseUrl, api: 'openai-completions', apiKey: encrypted ? '$' + keyName : 'local', models: [{ id: provider.modelId, name: provider.name || provider.modelId, contextWindow: provider.contextWindow || 128000, maxTokens: 8192, reasoning: !!provider.reasoning, input: provider.supportsImages ? ['text','image'] : ['text'] }] };
       } else if (provider.baseUrl) providers[provider.id] = { baseUrl: provider.baseUrl };
     }
     fs.writeFileSync(path.join(this.store.agentDir, 'models.json'), JSON.stringify({ providers }, null, 2));
